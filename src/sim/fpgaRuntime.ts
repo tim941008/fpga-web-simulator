@@ -243,7 +243,7 @@ export class FpgaRuntime {
       try {
         await binaryenReady();
         const wasmModel = new HDLModuleWASM(topDef, constPool);
-        wasmModel.getFileData = getFileData;
+        (wasmModel as any).getFileData = getFileData;
         await wasmModel.init();
         wasmModel.powercycle();
         runtime = new FpgaRuntime(wasmModel, 'verilator-wasm', top);
@@ -256,7 +256,7 @@ export class FpgaRuntime {
           msg: `WASM codegen failed (${String((wasmErr as Error)?.message ?? wasmErr)}); using JS backend`,
         });
         const jsModel = new HDLModuleJS(topDef, constPool);
-        jsModel.getFileData = getFileData;
+        (jsModel as any).getFileData = getFileData;
         jsModel.init();
         jsModel.powercycle();
         runtime = new FpgaRuntime(jsModel, 'verilator-js', top);

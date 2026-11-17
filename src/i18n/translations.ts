@@ -213,6 +213,6 @@ export const TRANSLATIONS = {
     internalVirtual: '內部暫存 / 虛擬訊號',
     emptyWaveformHint: '推進時脈或切換開關以記錄數位波形變化',
   },
-} as const;
+};
 
 export type TranslationDict = (typeof TRANSLATIONS)['en'];
