@@ -871,8 +871,8 @@ export class HDLModuleWASM implements HDLModuleRunner {
         if (local != null) {
             return this.bmod.local.get(local.index, local.itype);
         } else if (global != null) {
-            if (global.size > 8 && opts && opts.funcarg)
-                return this.address2wasm(e); // TODO: only applies to wordsel
+            if ((global.size > 8 || isArrayType(global.type)) && opts && opts.funcarg)
+                return this.address2wasm(e); // pass address for arrays and wide strings
             else
                 return this.loadmem(e, this.dataptr(), global.offset, global.size);
         }
