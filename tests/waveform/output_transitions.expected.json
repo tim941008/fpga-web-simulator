@@ -1,0 +1,12 @@
+{
+  "testId": "WAV-003",
+  "name": "Multi-Bit Output Ring Counter Waveform & Radix Formatting",
+  "topModule": "output_transitions",
+  "expectedCompile": "PASS",
+  "sequence": [
+    { "inputs": { "KEY": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 1 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 2 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 4 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 8 } }
+  ]
+}

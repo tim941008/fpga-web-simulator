@@ -1,0 +1,8 @@
+set_global_assignment -name FAMILY "MAX 10"
+set_global_assignment -name DEVICE 10M50DAF484C7G
+set_global_assignment -name TOP_LEVEL_ENTITY dup_top
+
+set_location_assignment PIN_A8 -to KEY[3]
+set_location_assignment PIN_A8 -to LEDR[0]
+set_location_assignment PIN_C10 -to SW[0]
+set_location_assignment PIN_C11 -to SW[0]

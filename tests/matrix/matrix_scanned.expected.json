@@ -1,0 +1,12 @@
+{
+  "testId": "MAT-002",
+  "name": "Row/Column Multiplexed Diagonal Scanner",
+  "topModule": "matrix_scanned",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "sequence": [
+    { "inputs": { "KEY": 1 }, "stepCycles": 1, "expectedOutputs": { "MATRIX_ROW": 1, "MATRIX_COL": 32768 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 1, "expectedOutputs": { "MATRIX_ROW": 2, "MATRIX_COL": 16384 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 1, "expectedOutputs": { "MATRIX_ROW": 4, "MATRIX_COL": 8192 } }
+  ]
+}

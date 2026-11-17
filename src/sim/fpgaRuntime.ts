@@ -203,9 +203,47 @@ export class FpgaRuntime {
       const constPool = parser.modules['@CONST-POOL@'];
       if (!topDef) throw new Error('Verilator XML has no TOP module');
 
+      // Build memory file lookup for $readmemh / $readmemb (fixes BUG-002)
+      const normalizeMemContent = (raw: string): string =>
+        raw
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/\/\/.*$/gm, '')
+          .split(/\s+/)
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0 && !t.startsWith('@'))
+          .join('\n');
+
+      const memFiles = new Map<string, string>();
+      // Built-in default fixture for rom_init.hex test / demo
+      memFiles.set('rom_init.hex', 'A5\n5A\nF0\n0F');
+      for (const f of files) {
+        const norm = normalizeMemContent(f.content);
+        const base = f.name.split(/[\\/]/).pop() ?? f.name;
+        memFiles.set(f.name, norm);
+        memFiles.set(f.name.toLowerCase(), norm);
+        memFiles.set(base, norm);
+        memFiles.set(base.toLowerCase(), norm);
+      }
+
+      const getFileData = (filename: string): string | null => {
+        const clean = filename.replace(/\0/g, '').trim();
+        const base = clean.split(/[\\/]/).pop() ?? clean;
+        const rev = clean.split('').reverse().join('');
+        return (
+          memFiles.get(clean) ??
+          memFiles.get(clean.toLowerCase()) ??
+          memFiles.get(base) ??
+          memFiles.get(base.toLowerCase()) ??
+          memFiles.get(rev) ??
+          memFiles.get(rev.toLowerCase()) ??
+          null
+        );
+      };
+
       try {
         await binaryenReady();
         const wasmModel = new HDLModuleWASM(topDef, constPool);
+        wasmModel.getFileData = getFileData;
         await wasmModel.init();
         wasmModel.powercycle();
         runtime = new FpgaRuntime(wasmModel, 'verilator-wasm', top);
@@ -218,6 +256,7 @@ export class FpgaRuntime {
           msg: `WASM codegen failed (${String((wasmErr as Error)?.message ?? wasmErr)}); using JS backend`,
         });
         const jsModel = new HDLModuleJS(topDef, constPool);
+        jsModel.getFileData = getFileData;
         jsModel.init();
         jsModel.powercycle();
         runtime = new FpgaRuntime(jsModel, 'verilator-js', top);

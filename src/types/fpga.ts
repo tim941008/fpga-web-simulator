@@ -17,6 +17,7 @@ export interface PinAssignment {
   ioStandard?: string;      // e.g. "3.3-V LVTTL"
   category: ComponentCategory;
   direction: 'input' | 'output' | 'inout';
+  hasConflict?: boolean;    // True when multiple signals share the same physical pin
 }
 
 export interface PortDefinition {

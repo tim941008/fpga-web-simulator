@@ -1,0 +1,13 @@
+{
+  "testId": "MAT-001",
+  "name": "Static Smiley 16x16 Matrix LUT",
+  "topModule": "matrix_smiley",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "vectors": [
+    { "inputs": { "SW": 0 }, "expectedOutputs": { "MATRIX_ROW": 1, "MATRIX_COL": 2016 } },
+    { "inputs": { "SW": 3 }, "expectedOutputs": { "MATRIX_ROW": 8, "MATRIX_COL": 18018 } },
+    { "inputs": { "SW": 10 }, "expectedOutputs": { "MATRIX_ROW": 1024, "MATRIX_COL": 18402 } },
+    { "inputs": { "SW": 15 }, "expectedOutputs": { "MATRIX_ROW": 32768, "MATRIX_COL": 0 } }
+  ]
+}

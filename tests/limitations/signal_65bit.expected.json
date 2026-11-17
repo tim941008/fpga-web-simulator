@@ -1,0 +1,9 @@
+{
+  "testId": "LIM-002",
+  "name": "65-Bit Signal (>64-Bit Boundary Test)",
+  "topModule": "signal_65bit",
+  "expectedWasmCodegen": "FAIL",
+  "expectedJsFallback": "PARTIAL",
+  "expectedPortExposedInFpgaRuntime": false,
+  "reason": "HDLModuleWASM throws 'data types > 64 bits not supported' and FpgaRuntime skips ports with width > 64"
+}

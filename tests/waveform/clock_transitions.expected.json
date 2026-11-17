@@ -1,0 +1,9 @@
+{
+  "testId": "WAV-001",
+  "name": "Clock Edge & Half-Cycle Waveform Trace Capture",
+  "topModule": "clock_transitions",
+  "expectedCompile": "PASS",
+  "expectedHistorySamplesAfter3Cycles": 7,
+  "expectedClockTrace": [0, 1, 0, 1, 0, 1, 0],
+  "expectedLedrTrace": [0, 1, 1, 0, 0, 1, 1]
+}

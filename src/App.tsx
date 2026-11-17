@@ -10,6 +10,8 @@ import {
   AlertTriangle,
   XCircle,
   Loader2,
+  Globe,
+  Plus,
 } from 'lucide-react';
 import { buildBoardControlGroups, parseQsfFile } from './parsers/qsfParser';
 import { parseVerilogSource } from './parsers/verilogParser';
@@ -20,6 +22,12 @@ import { BackendMode, ClockControls } from './components/ClockControls';
 import { BoardView } from './components/BoardView';
 import { MatrixViewer } from './components/MatrixViewer';
 import { SignalMonitor } from './components/SignalMonitor';
+import {
+  getInitialLanguage,
+  Language,
+  saveLanguage,
+  TRANSLATIONS,
+} from './i18n/translations';
 
 const createEmpty16x16 = (): number[][] => Array.from({ length: 16 }, () => Array(16).fill(0));
 
@@ -32,6 +40,16 @@ interface SourceFile {
 }
 
 export const App: React.FC = () => {
+  // ------------------------------------------------------------------ i18n
+  const [lang, setLang] = useState<Language>(getInitialLanguage);
+  const t = TRANSLATIONS[lang];
+
+  const handleToggleLanguage = () => {
+    const next: Language = lang === 'en' ? 'zh-TW' : 'en';
+    setLang(next);
+    saveLanguage(next);
+  };
+
   // ------------------------------------------------------------------ sources
   const [verilogFiles, setVerilogFiles] = useState<SourceFile[]>([
     { name: SAMPLE_PRESETS[0].verilogFilename, content: SAMPLE_PRESETS[0].verilogCode },
@@ -67,20 +85,33 @@ export const App: React.FC = () => {
   const clockLevelRef = useRef<0 | 1>(0);
   const matrixRef = useRef<number[][]>(createEmpty16x16());
   const compileSeq = useRef(0);
+  const wasmCachedRef = useRef(false);
+  const debounceCompileRef = useRef(false);
 
   // ------------------------------------------------------------ parsing / pin mapper
-  const verilogParsed = useMemo(() => parseVerilogSource(verilogFiles.map((f) => f.content)), [verilogFiles]);
+  const verilogOnlyContents = useMemo(
+    () =>
+      verilogFiles
+        .filter((f) => /\.(v|sv|vh|svh)$/i.test(f.name))
+        .map((f) => f.content),
+    [verilogFiles]
+  );
+
+  const verilogParsed = useMemo(
+    () => parseVerilogSource(verilogOnlyContents),
+    [verilogOnlyContents]
+  );
   const qsfParsed = useMemo(() => parseQsfFile(qsfFile.content), [qsfFile]);
 
   // Top module: QSF TOP_LEVEL_ENTITY if it exists in the sources, otherwise auto-detected
   const topModule = useMemo(() => {
-    const all = verilogFiles.map((f) => f.content).join('\n');
+    const all = verilogOnlyContents.join('\n');
     const qsfTop = qsfParsed.topLevelEntity;
     if (qsfTop && new RegExp(`\\bmodule\\s+${qsfTop}\\b`).test(all)) return qsfTop;
     return verilogParsed.topModule;
-  }, [verilogFiles, qsfParsed.topLevelEntity, verilogParsed.topModule]);
+  }, [verilogOnlyContents, qsfParsed.topLevelEntity, verilogParsed.topModule]);
 
-  // Ports reported by Verilator are authoritative; fall back to the regex parser before first compile
+  // Ports reported by Verilator are authoritative; fall back to the parser before first compile
   const ports = runtimePorts ?? verilogParsed.ports;
 
   const controlGroups = useMemo(
@@ -99,31 +130,42 @@ export const App: React.FC = () => {
   const clkName = clockGroup?.baseName ?? null;
   const rowSigName = matrixRowGroup?.baseName ?? 'MATRIX_ROW';
   const colSigName = matrixColGroup?.baseName ?? 'MATRIX_COL';
+  const hasMatrixPorts = Boolean(matrixRowGroup || matrixColGroup);
 
-  // --------------------------------------------------------------- matrix POV
+  // --------------------------------------------------------------- matrix POV (fixes BUG-005)
   const sampleMatrix = useCallback(
-    (sig: Record<string, bigint>) => {
+    (
+      sig: Record<string, bigint>,
+      usePov: boolean = povEnabled,
+      invertCol: boolean = invertColPolarity
+    ) => {
       const rowVal = sig[rowSigName] ?? 0n;
       const raw = sig[colSigName] ?? 0n;
-      const colVal = invertColPolarity ? ~raw & 0xffffn : raw & 0xffffn;
+      const colVal = invertCol ? ~raw & 0xffffn : raw & 0xffffn;
       const buf = matrixRef.current;
+
       for (let r = 0; r < 16; r++) {
-        if (((rowVal >> BigInt(r)) & 1n) === 0n) continue;
+        const rowActive = ((rowVal >> BigInt(r)) & 1n) === 1n;
+        if (!rowActive) {
+          if (!usePov) {
+            for (let c = 0; c < 16; c++) buf[r][c] = 0;
+          } else {
+            for (let c = 0; c < 16; c++) buf[r][c] *= 0.96;
+          }
+          continue;
+        }
         for (let c = 0; c < 16; c++) {
           const on = ((colVal >> BigInt(15 - c)) & 1n) === 1n;
-          if (on) buf[r][c] = 1;
-          else if (!povEnabled) buf[r][c] = 0;
+          if (on) {
+            buf[r][c] = 1;
+          } else {
+            buf[r][c] = usePov ? buf[r][c] * 0.5 : 0;
+          }
         }
       }
     },
     [rowSigName, colSigName, invertColPolarity, povEnabled]
   );
-
-  const decayMatrix = useCallback(() => {
-    if (!povEnabled) return;
-    const buf = matrixRef.current;
-    for (let r = 0; r < 16; r++) for (let c = 0; c < 16; c++) buf[r][c] *= 0.85;
-  }, [povEnabled]);
 
   const publishMatrix = useCallback(() => {
     setMatrixBuffer(matrixRef.current.map((row) => row.slice()));
@@ -134,7 +176,7 @@ export const App: React.FC = () => {
     publishMatrix();
   }, [publishMatrix]);
 
-  // ---------------------------------------------------------------- compile
+  // ---------------------------------------------------------------- compile (fixes BUG-009)
   const compile = useCallback(async () => {
     const seq = ++compileSeq.current;
     setRunning(false);
@@ -143,8 +185,9 @@ export const App: React.FC = () => {
     const result = await FpgaRuntime.compile(verilogFiles, topModule);
     if (seq !== compileSeq.current) {
       result.runtime?.dispose();
-      return; // a newer compile superseded this one
+      return;
     }
+    wasmCachedRef.current = true;
     setCompiling(false);
     setMessages(result.messages);
 
@@ -177,10 +220,12 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [verilogFiles, topModule]);
 
-  // Auto-compile (debounced) whenever the sources change
+  // Compile immediately on initial mount, preset switch, or file upload; debounce only textarea edits
   useEffect(() => {
-    const t = window.setTimeout(() => void compile(), 600);
-    return () => window.clearTimeout(t);
+    const delay = debounceCompileRef.current ? 450 : 0;
+    debounceCompileRef.current = false;
+    const timer = window.setTimeout(() => void compile(), delay);
+    return () => window.clearTimeout(timer);
   }, [compile]);
 
   // ------------------------------------------------------------- clocking
@@ -256,7 +301,6 @@ export const App: React.FC = () => {
       if (n <= 0) return;
       carry -= n;
       try {
-        decayMatrix();
         const snaps = runCycles(n);
         if (!snaps.length) return;
         publishMatrix();
@@ -266,14 +310,17 @@ export const App: React.FC = () => {
         pushHistory(snaps.slice(-HISTORY_LEN));
       } catch (e) {
         setRunning(false);
-        setMessages((m) => [...m, { severity: 'error', file: null, line: 0, msg: `Runtime: ${String(e)}` }]);
+        setMessages((m) => [
+          ...m,
+          { severity: 'error', file: null, line: 0, msg: `Runtime: ${String(e)}` },
+        ]);
       }
     }, FRAME_MS);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, clockHz, clkName, sampleMatrix, decayMatrix]);
+  }, [running, clockHz, clkName, sampleMatrix]);
 
-  // ------------------------------------------------------------- inputs
+  // ------------------------------------------------------------- inputs (fixes BUG-007)
   const applyInput = (signalName: string, update: (cur: bigint) => bigint) => {
     const rt = runtimeRef.current;
     if (!rt) return;
@@ -284,13 +331,22 @@ export const App: React.FC = () => {
     sampleMatrix(sig);
     publishMatrix();
     setSignals(sig);
+
+    // Record waveform sample when combinational inputs change while clock is paused or absent (fixes BUG-007)
+    if (!running || !clkName) {
+      pushHistory([
+        { cycle: cycleRef.current, halfCycle: clockLevelRef.current, values: sig },
+      ]);
+    }
   };
 
   const handleToggleInputBit = (name: string, bit: number) =>
     applyInput(name, (cur) => cur ^ (1n << BigInt(bit)));
 
   const handleSetInputBit = (name: string, bit: number, v: 0 | 1) =>
-    applyInput(name, (cur) => (v ? cur | (1n << BigInt(bit)) : cur & ~(1n << BigInt(bit))));
+    applyInput(name, (cur) =>
+      v ? cur | (1n << BigInt(bit)) : cur & ~(1n << BigInt(bit))
+    );
 
   const handleReset = () => {
     const rt = runtimeRef.current;
@@ -298,7 +354,11 @@ export const App: React.FC = () => {
     setRunning(false);
     const inputs: Record<string, bigint> = {};
     const cur = rt.getSignals();
-    for (const p of rt.ports) if (p.direction === 'input' && p.name !== clkName) inputs[p.name] = cur[p.name] ?? 0n;
+    for (const p of rt.ports) {
+      if (p.direction === 'input' && p.name !== clkName) {
+        inputs[p.name] = cur[p.name] ?? 0n;
+      }
+    }
     rt.reset(inputs);
     cycleRef.current = 0;
     clockLevelRef.current = 0;
@@ -307,14 +367,19 @@ export const App: React.FC = () => {
     setCycleCount(0);
     setSignals(sig);
     setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
-    clearMatrix();
+    matrixRef.current = createEmpty16x16();
+    sampleMatrix(sig);
+    publishMatrix();
   };
 
   // ------------------------------------------------------------- uploads
   const handleUploadVerilogFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const loaded: SourceFile[] = [];
-    for (const file of Array.from(fileList)) loaded.push({ name: file.name, content: await file.text() });
+    for (const file of Array.from(fileList)) {
+      loaded.push({ name: file.name, content: await file.text() });
+    }
+    debounceCompileRef.current = false;
     setRuntimePorts(null);
     setEditIndex(0);
     setVerilogFiles(loaded);
@@ -330,64 +395,80 @@ export const App: React.FC = () => {
   const signalDefs = [...ports, ...runtimeInternals];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/30 text-slate-100 flex flex-col">
       {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30">
+      <header className="border-b border-indigo-500/25 bg-slate-900/90 backdrop-blur-md sticky top-0 z-30 shadow-lg shadow-slate-950/50">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/25 to-cyan-500/20 border border-emerald-400/40 flex items-center justify-center shadow-inner">
               <Layers className="w-5 h-5 text-emerald-400" />
             </div>
             <div>
-              <h1 className="text-base font-bold tracking-tight text-white flex items-center gap-2">
-                Web FPGA Simulator
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Verilator WASM + Quartus QSF
+              <h1 className="text-base font-bold tracking-tight text-white flex flex-wrap items-center gap-2">
+                {t.appTitle}
+                <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/35">
+                  {t.appBadge}
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
-                Top: <span className="font-mono text-cyan-300">{topModule}</span> — Verilog is compiled in your
-                browser by Verilator (WebAssembly)
+                {t.topModuleLabel}{' '}
+                <span className="font-mono text-cyan-300 font-semibold">
+                  {topModule}
+                </span>{' '}
+                — {t.topSubtitle}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Preset Selector */}
             <select
               onChange={(e) => {
                 const preset = SAMPLE_PRESETS.find((p) => p.id === e.target.value);
                 if (preset) {
+                  debounceCompileRef.current = false;
                   setRuntimePorts(null);
                   setEditIndex(0);
-                  setVerilogFiles([{ name: preset.verilogFilename, content: preset.verilogCode }]);
-                  setQsfFile({ name: preset.qsfFilename, content: preset.qsfContent });
+                  setVerilogFiles([
+                    { name: preset.verilogFilename, content: preset.verilogCode },
+                  ]);
+                  setQsfFile({
+                    name: preset.qsfFilename,
+                    content: preset.qsfContent,
+                  });
                 }
               }}
-              className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+              className="bg-slate-950 border border-indigo-500/35 hover:border-indigo-400/60 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-400 transition"
               defaultValue={SAMPLE_PRESETS[0].id}
             >
               {SAMPLE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
-                  Preset: {p.name}
+                  {t.presetLabel} {p.name}
                 </option>
               ))}
             </select>
 
-            <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 cursor-pointer transition">
-              <FileCode className="w-4 h-4" />
-              <span>Upload .v ({verilogFiles.length} file{verilogFiles.length > 1 ? 's' : ''})</span>
+            {/* Upload .v / .hex */}
+            <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 cursor-pointer transition">
+              <FileCode className="w-4 h-4 text-emerald-400" />
+              <span>
+                {t.uploadVerilog} ({verilogFiles.length} {t.filesSuffix})
+              </span>
               <input
                 type="file"
-                accept=".v,.sv,.vh,.svh"
+                accept=".v,.sv,.vh,.svh,.hex,.mem,.mif,.txt,.binary"
                 multiple
                 className="hidden"
                 onChange={(e) => handleUploadVerilogFiles(e.target.files)}
               />
             </label>
 
-            <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 cursor-pointer transition">
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>Upload .qsf ({qsfFile.name})</span>
+            {/* Upload .qsf */}
+            <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/40 cursor-pointer transition">
+              <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
+              <span>
+                {t.uploadQsf} ({qsfFile.name})
+              </span>
               <input
                 type="file"
                 accept=".qsf"
@@ -395,6 +476,17 @@ export const App: React.FC = () => {
                 onChange={(e) => handleUploadQsfFile(e.target.files?.[0])}
               />
             </label>
+
+            {/* Language Switcher (EN / 繁體中文) */}
+            <button
+              type="button"
+              onClick={handleToggleLanguage}
+              title="Switch Language / 切換語言 (English / 繁體中文)"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 border border-violet-500/40 transition"
+            >
+              <Globe className="w-3.5 h-3.5 text-violet-300" />
+              <span>{lang === 'en' ? '繁體中文' : 'English'}</span>
+            </button>
           </div>
         </div>
       </header>
@@ -408,6 +500,7 @@ export const App: React.FC = () => {
           clockSignalName={clkName}
           backendMode={backendMode}
           compiling={compiling}
+          t={t}
           onCompile={() => void compile()}
           onToggleRun={() => setRunning((r) => !r)}
           onStepFullCycle={stepFullCycle}
@@ -416,34 +509,52 @@ export const App: React.FC = () => {
           onChangeClockHz={setClockHz}
         />
 
-        {/* Compiler output */}
-        {(compiling || messages.length > 0 || compileInfo) && (
+        {/* Compiler & Pin Conflict Banner */}
+        {(compiling ||
+          messages.length > 0 ||
+          compileInfo ||
+          qsfParsed.conflicts.length > 0) && (
           <div
-            className={`rounded-xl border p-3 text-xs font-mono space-y-1 max-h-48 overflow-y-auto ${
+            className={`rounded-xl border p-3 text-xs font-mono space-y-1 max-h-48 overflow-y-auto shadow-md ${
               errorCount
-                ? 'border-rose-800/70 bg-rose-950/30'
-                : warnCount
-                ? 'border-amber-800/60 bg-amber-950/20'
-                : 'border-emerald-800/50 bg-emerald-950/20'
+                ? 'border-rose-500/50 bg-rose-950/35'
+                : warnCount || qsfParsed.conflicts.length > 0
+                ? 'border-amber-500/50 bg-amber-950/25'
+                : 'border-emerald-500/40 bg-emerald-950/25'
             }`}
           >
-            <div className="flex items-center gap-2 text-slate-300">
+            <div className="flex flex-wrap items-center gap-2 text-slate-200">
               {compiling ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-300" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-300" />
               ) : errorCount ? (
                 <XCircle className="w-3.5 h-3.5 text-rose-400" />
+              ) : warnCount || qsfParsed.conflicts.length > 0 ? (
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
               ) : (
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
               )}
               <span>
                 {compiling
-                  ? 'Running Verilator (first run downloads ~6 MB verilator_bin.wasm)…'
-                  : `${errorCount} error(s), ${warnCount} warning(s)`}
+                  ? wasmCachedRef.current
+                    ? t.compilingCached
+                    : t.compilingFirstRun
+                  : `${errorCount} ${t.errorsCount}, ${warnCount} ${t.warningsCount}${
+                      qsfParsed.conflicts.length > 0
+                        ? `, ${qsfParsed.conflicts.length} ${t.pinConflictsCount}`
+                        : ''
+                    }`}
               </span>
-              {compileInfo && <span className="text-slate-500">• {compileInfo}</span>}
+              {compileInfo && (
+                <span className="text-cyan-300/80">• {compileInfo}</span>
+              )}
             </div>
             {messages.map((m, i) => (
-              <div key={i} className={m.severity === 'error' ? 'text-rose-300' : 'text-amber-300'}>
+              <div
+                key={i}
+                className={
+                  m.severity === 'error' ? 'text-rose-300' : 'text-amber-300'
+                }
+              >
                 {m.severity === 'error' ? (
                   <XCircle className="inline w-3 h-3 mr-1" />
                 ) : (
@@ -453,26 +564,44 @@ export const App: React.FC = () => {
                 {m.msg}
               </div>
             ))}
+            {qsfParsed.conflicts.map((c) => (
+              <div key={c.pinLocation} className="text-amber-300">
+                <AlertTriangle className="inline w-3 h-3 mr-1" />
+                {t.pinConflictBanner} {c.pinLocation} → {c.signals.join(', ')}
+              </div>
+            ))}
           </div>
         )}
 
         {/* Tabs */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-500/20 pb-2.5">
+          <div className="flex flex-wrap items-center gap-2">
             {(
               [
-                ['board', <FolderUp key="i" className="w-3.5 h-3.5" />, 'FPGA Board & 16×16 Matrix'],
-                ['code', <Code2 key="i" className="w-3.5 h-3.5" />, 'Verilog Editor (.v)'],
-                ['qsf', <Pin key="i" className="w-3.5 h-3.5" />, `QSF Pin Mapper (${qsfParsed.assignments.length} pins)`],
+                [
+                  'board',
+                  <FolderUp key="i" className="w-3.5 h-3.5" />,
+                  t.tabBoard,
+                ],
+                [
+                  'code',
+                  <Code2 key="i" className="w-3.5 h-3.5" />,
+                  t.tabCode,
+                ],
+                [
+                  'qsf',
+                  <Pin key="i" className="w-3.5 h-3.5" />,
+                  `${t.tabQsf} (${qsfParsed.assignments.length} ${t.pinsUnit})`,
+                ],
               ] as const
             ).map(([id, icon, label]) => (
               <button
                 key={id}
                 onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition ${
                   activeTab === id
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/50 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200 bg-slate-900/60 border border-slate-800'
                 }`}
               >
                 {icon}
@@ -480,10 +609,12 @@ export const App: React.FC = () => {
               </button>
             ))}
           </div>
-          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400 font-mono">
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-xl">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             <span>
-              {ports.length} ports • {runtimeInternals.length} internal signals • {qsfParsed.assignments.length} QSF pins
+              {ports.length} {t.portsUnit} • {runtimeInternals.length}{' '}
+              {t.internalSignalsUnit} • {qsfParsed.assignments.length}{' '}
+              {t.qsfPinsUnit}
             </span>
           </div>
         </div>
@@ -497,6 +628,7 @@ export const App: React.FC = () => {
                 partNumber={qsfParsed.device}
                 groups={controlGroups}
                 signals={signals}
+                t={t}
                 onToggleInputBit={handleToggleInputBit}
                 onSetInputBit={handleSetInputBit}
               />
@@ -510,8 +642,20 @@ export const App: React.FC = () => {
                 colValue={signals[colSigName] ?? 0n}
                 povEnabled={povEnabled}
                 invertColPolarity={invertColPolarity}
-                onTogglePov={() => setPovEnabled((v) => !v)}
-                onToggleInvertCol={() => setInvertColPolarity((v) => !v)}
+                isConnected={hasMatrixPorts}
+                t={t}
+                onTogglePov={() => {
+                  const nextPov = !povEnabled;
+                  setPovEnabled(nextPov);
+                  sampleMatrix(signals, nextPov, invertColPolarity);
+                  publishMatrix();
+                }}
+                onToggleInvertCol={() => {
+                  const nextInv = !invertColPolarity;
+                  setInvertColPolarity(nextInv);
+                  sampleMatrix(signals, povEnabled, nextInv);
+                  publishMatrix();
+                }}
                 onClearBuffer={clearMatrix}
               />
             </div>
@@ -519,74 +663,118 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'code' && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {verilogFiles.map((f, i) => (
-                <button
-                  key={f.name + i}
-                  onClick={() => setEditIndex(i)}
-                  className={`px-2.5 py-1 rounded text-xs font-mono border ${
-                    i === editIndex
-                      ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                      : 'border-slate-700 text-slate-400'
-                  }`}
-                >
-                  {f.name}
-                </button>
-              ))}
-              <span className="text-xs text-slate-500">Edits are re-compiled by Verilator automatically.</span>
+          <div className="bg-slate-900/95 border border-emerald-500/25 rounded-2xl p-4 space-y-3 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {verilogFiles.map((f, i) => (
+                  <button
+                    key={f.name + i}
+                    onClick={() => setEditIndex(i)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition ${
+                      i === editIndex
+                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {f.name}
+                  </button>
+                ))}
+                {!verilogFiles.some((f) => f.name === 'rom_init.hex') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVerilogFiles((prev) => [
+                        ...prev,
+                        { name: 'rom_init.hex', content: 'A5\n5A\nF0\n0F\n' },
+                      ]);
+                      setEditIndex(verilogFiles.length);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-violet-200 transition"
+                  >
+                    <Plus className="w-3 h-3" />
+                    {t.addMemFileBtn}
+                  </button>
+                )}
+              </div>
+              <span className="text-xs text-slate-400">
+                {t.editorAutoCompileNote}
+              </span>
             </div>
             <textarea
               value={verilogFiles[editIndex]?.content ?? ''}
               onChange={(e) => {
                 const text = e.target.value;
-                setVerilogFiles((files) => files.map((f, i) => (i === editIndex ? { ...f, content: text } : f)));
+                debounceCompileRef.current = true;
+                setVerilogFiles((files) =>
+                  files.map((f, i) => (i === editIndex ? { ...f, content: text } : f))
+                );
               }}
               spellCheck={false}
-              className="w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+              className="w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
             />
           </div>
         )}
 
         {activeTab === 'qsf' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
-              <div className="text-xs font-mono text-cyan-400">Quartus QSF Source ({qsfFile.name})</div>
+            <div className="bg-slate-900/95 border border-cyan-500/25 rounded-2xl p-4 space-y-3 shadow-xl">
+              <div className="text-xs font-mono font-semibold text-cyan-300">
+                {t.qsfSourceTitle} ({qsfFile.name})
+              </div>
               <textarea
                 value={qsfFile.content}
-                onChange={(e) => setQsfFile({ name: qsfFile.name, content: e.target.value })}
+                onChange={(e) =>
+                  setQsfFile({ name: qsfFile.name, content: e.target.value })
+                }
                 spellCheck={false}
-                className="w-full h-[380px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                className="w-full h-[380px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 overflow-y-auto max-h-[440px]">
-              <div className="text-xs font-mono text-slate-300 mb-3 font-semibold">
-                Parsed Pin Assignments ({qsfParsed.assignments.length})
+            <div className="bg-slate-900/95 border border-cyan-500/25 rounded-2xl p-4 overflow-y-auto max-h-[440px] shadow-xl">
+              <div className="text-xs font-mono text-slate-200 mb-3 font-semibold">
+                {t.parsedPinsTitle} ({qsfParsed.assignments.length})
               </div>
               <table className="w-full text-left font-mono text-xs">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="py-1.5">Signal</th>
-                    <th className="py-1.5">Pin</th>
-                    <th className="py-1.5">Category</th>
-                    <th className="py-1.5">In design?</th>
+                    <th className="py-1.5">{t.colSignal}</th>
+                    <th className="py-1.5">{t.colPin}</th>
+                    <th className="py-1.5">{t.colCategory}</th>
+                    <th className="py-1.5">{t.colStatus}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {qsfParsed.assignments.map((a) => (
-                    <tr key={a.signalName}>
-                      <td className="py-1.5 text-slate-200">{a.signalName}</td>
-                      <td className="py-1.5 text-emerald-400">{a.pinLocation}</td>
-                      <td className="py-1.5 text-cyan-300">{a.category}</td>
-                      <td className="py-1.5">
-                        {ports.some((p) => p.name === a.baseName) ? (
-                          <span className="text-emerald-400">✓</span>
-                        ) : (
-                          <span className="text-slate-600">unused</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {qsfParsed.assignments.map((a) => {
+                    const matched = ports.some((p) => p.name === a.baseName);
+                    return (
+                      <tr key={a.signalName}>
+                        <td className="py-1.5 text-slate-200">{a.signalName}</td>
+                        <td
+                          className={`py-1.5 font-semibold ${
+                            a.hasConflict ? 'text-rose-400' : 'text-emerald-400'
+                          }`}
+                        >
+                          {a.pinLocation}
+                        </td>
+                        <td className="py-1.5 text-cyan-300">{a.category}</td>
+                        <td className="py-1.5">
+                          {a.hasConflict ? (
+                            <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[10px]">
+                              ⚠ {t.statusConflict}
+                            </span>
+                          ) : matched ? (
+                            <span className="text-emerald-400">
+                              ✓ {t.statusMatched}
+                            </span>
+                          ) : (
+                            <span className="text-slate-500">
+                              {t.statusUnused}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -598,6 +786,7 @@ export const App: React.FC = () => {
           signals={signals}
           history={history}
           pinAssignments={qsfParsed.assignments}
+          t={t}
         />
       </main>
     </div>

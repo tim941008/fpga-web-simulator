@@ -27,6 +27,10 @@ npm run dev
 
 For production build and GitHub Pages deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
+## Limitations
+
+See [LIMITATIONS.md](LIMITATIONS.md) for a detailed breakdown of current simulation, Verilator WASM, 16×16 Matrix Viewer, QSF parser, and build limitations, classified into **Known Limitations**, **Build Limitations**, and **Planned Improvements**.
+
 ## License
 
 This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.  

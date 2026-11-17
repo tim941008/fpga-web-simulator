@@ -113,30 +113,43 @@ export function parseVerilogSource(sources: string[]): VerilogParseResult {
     };
   };
 
-  // Parse ANSI style ports inside module header
-  const ansiPortRegex = /\b(input|output|inout)\b\s*(?:(wire|reg|logic)\b\s*)?(?:signed\b\s*)?(\[[^\]]+\])?\s*([^;()]+)/g;
-  let aMatch: RegExpExecArray | null;
-  while ((aMatch = ansiPortRegex.exec(topMod.headerPorts)) !== null) {
-    const direction = aMatch[1] as 'input' | 'output' | 'inout';
-    const isReg = aMatch[2] === 'reg' || aMatch[2] === 'logic';
-    const { msb, lsb, width } = parseRange(aMatch[3]);
-    const namesChunk = aMatch[4];
+  // Parse ANSI-style ports inside module header by splitting on commas and carrying active type state (fixes BUG-001)
+  let activeDirection: 'input' | 'output' | 'inout' | null = null;
+  let activeIsReg = false;
+  let activeRange = { msb: 0, lsb: 0, width: 1 };
 
-    // Split by comma, stopping if another direction keyword appears
-    const tokens = namesChunk.split(',');
-    for (const rawTok of tokens) {
-      const tok = rawTok.trim();
-      if (!tok) continue;
-      if (/^(input|output|inout)\b/.test(tok)) break;
-      const cleanName = tok.split('=')[0].trim().match(/^([A-Za-z_][A-Za-z0-9_$]*)/)?.[1];
-      if (cleanName && !['input', 'output', 'inout', 'wire', 'reg', 'logic', 'signed'].includes(cleanName)) {
+  const headerTokens = topMod.headerPorts.split(',');
+  for (const rawToken of headerTokens) {
+    const tok = rawToken.trim();
+    if (!tok) continue;
+
+    const declMatch = tok.match(
+      /^(input|output|inout)\b\s*(?:(wire|reg|logic)\b\s*)?(?:signed\b\s*)?(\[[^\]]+\])?\s*(.+)$/
+    );
+    let namePart = tok;
+    if (declMatch) {
+      activeDirection = declMatch[1] as 'input' | 'output' | 'inout';
+      activeIsReg = declMatch[2] === 'reg' || declMatch[2] === 'logic';
+      activeRange = parseRange(declMatch[3]);
+      namePart = declMatch[4].trim();
+    }
+
+    if (activeDirection) {
+      const cleanName = namePart
+        .split('=')[0]
+        .trim()
+        .match(/^([A-Za-z_][A-Za-z0-9_$]*)/)?.[1];
+      if (
+        cleanName &&
+        !['input', 'output', 'inout', 'wire', 'reg', 'logic', 'signed'].includes(cleanName)
+      ) {
         portsMap.set(cleanName, {
           name: cleanName,
-          direction,
-          msb,
-          lsb,
-          width,
-          isReg,
+          direction: activeDirection,
+          msb: activeRange.msb,
+          lsb: activeRange.lsb,
+          width: activeRange.width,
+          isReg: activeIsReg,
         });
       }
     }

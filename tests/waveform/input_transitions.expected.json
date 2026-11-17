@@ -1,0 +1,8 @@
+{
+  "testId": "WAV-002",
+  "name": "Combinational Input Transition Waveform Recording",
+  "topModule": "input_transitions",
+  "expectedCompile": "PASS",
+  "inputSequence": [0, 1, 2, 3],
+  "expectedTraceRecordedOnInputToggle": true
+}

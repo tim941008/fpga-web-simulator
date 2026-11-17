@@ -1,0 +1,8 @@
+{
+  "testId": "LIM-003",
+  "name": "256-Bit Wide Vector Test",
+  "topModule": "signal_256bit",
+  "expectedWasmCodegen": "FAIL",
+  "expectedPortExposedInFpgaRuntime": false,
+  "reason": "Signals > 64 bits are unsupported in HDLModuleWASM and filtered out by FpgaRuntime (width > 64)"
+}

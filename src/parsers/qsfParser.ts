@@ -1,10 +1,16 @@
 import { BoardControlGroup, ComponentCategory, PinAssignment, PortDefinition } from '../types/fpga';
 
+export interface QsfPinConflict {
+  pinLocation: string;
+  signals: string[];
+}
+
 export interface QsfParseResult {
   topLevelEntity?: string;
   family?: string;
   device?: string;
   assignments: PinAssignment[];
+  conflicts: QsfPinConflict[];
 }
 
 export function classifySignalCategory(
@@ -82,6 +88,7 @@ export function inferSignalDirection(category: ComponentCategory): 'input' | 'ou
 
 /**
  * Parses Intel/Altera Quartus II / Quartus Prime .qsf files
+ * and detects duplicate physical pin conflicts (fixes BUG-004).
  */
 export function parseQsfFile(qsfContent: string): QsfParseResult {
   const lines = qsfContent.split(/\r?\n/);
@@ -110,7 +117,6 @@ export function parseQsfFile(qsfContent: string): QsfParseResult {
 
     // Match location assignments:
     // e.g. set_location_assignment PIN_C10 -to SW[0]
-    // or   set_location_assignment PIN_C10 -to "SW[0]"
     const locMatch = line.match(
       /^set_location_assignment\s+(PIN_[A-Za-z0-9_]+|[A-Za-z0-9_]+)\s+.*?-to\s+(?:"([^"]+)"|([^\s#]+))/i
     );
@@ -124,7 +130,6 @@ export function parseQsfFile(qsfContent: string): QsfParseResult {
     }
 
     // Match IO_STANDARD instance assignments:
-    // e.g. set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to SW[0]
     const ioMatch = line.match(
       /^set_instance_assignment\s+-name\s+IO_STANDARD\s+(?:"([^"]+)"|(\S+))\s+.*?-to\s+(?:"([^"]+)"|([^\s#]+))/i
     );
@@ -134,6 +139,24 @@ export function parseQsfFile(qsfContent: string): QsfParseResult {
       const existing = pinMap.get(signalName) ?? { pin: 'UNASSIGNED' };
       existing.ioStandard = ioStandard;
       pinMap.set(signalName, existing);
+    }
+  }
+
+  // Detect duplicate physical pin assignments across distinct signals (fixes BUG-004)
+  const pinToSignals = new Map<string, string[]>();
+  for (const [signalName, info] of pinMap.entries()) {
+    if (!info.pin || info.pin === 'UNASSIGNED') continue;
+    const list = pinToSignals.get(info.pin) ?? [];
+    list.push(signalName);
+    pinToSignals.set(info.pin, list);
+  }
+
+  const conflicts: QsfPinConflict[] = [];
+  const conflictingPins = new Set<string>();
+  for (const [pinLocation, sigs] of pinToSignals.entries()) {
+    if (sigs.length > 1) {
+      conflicts.push({ pinLocation, signals: sigs });
+      conflictingPins.add(pinLocation);
     }
   }
 
@@ -154,6 +177,7 @@ export function parseQsfFile(qsfContent: string): QsfParseResult {
       ioStandard: info.ioStandard,
       category,
       direction,
+      hasConflict: conflictingPins.has(info.pin),
     });
   }
 
@@ -162,17 +186,20 @@ export function parseQsfFile(qsfContent: string): QsfParseResult {
     family,
     device,
     assignments,
+    conflicts,
   };
 }
 
 /**
- * Combines Verilog ports and QSF pin assignments to auto-generate board control groups
+ * Combines Verilog ports and QSF pin assignments to auto-generate board control groups.
+ * When `ports` is non-empty, only generates board control groups for actual module ports (fixes BUG-003).
  */
 export function buildBoardControlGroups(
   ports: PortDefinition[],
   assignments: PinAssignment[]
 ): BoardControlGroup[] {
   const groups = new Map<string, BoardControlGroup>();
+  const hasModulePorts = ports.length > 0;
 
   // 1. Register all Verilog ports first
   for (const port of ports) {
@@ -188,10 +215,14 @@ export function buildBoardControlGroups(
     });
   }
 
-  // 2. Merge QSF pin assignments (and create groups if QSF defines pins not yet in ports)
+  // 2. Attach QSF pin locations to matching module ports (or build from QSF if no Verilog ports exist)
   for (const assign of assignments) {
     let group = groups.get(assign.baseName);
     if (!group) {
+      if (hasModulePorts) {
+        // Ignore orphan QSF signals that do not exist in the active Verilog module (fixes BUG-003)
+        continue;
+      }
       const idx = assign.bitIndex ?? 0;
       group = {
         category: assign.category,
@@ -203,16 +234,16 @@ export function buildBoardControlGroups(
         pins: {},
       };
       groups.set(assign.baseName, group);
-    } else {
-      if (assign.bitIndex !== null) {
-        group.msb = Math.max(group.msb, assign.bitIndex);
-        group.lsb = Math.min(group.lsb, assign.bitIndex);
-        group.width = group.msb - group.lsb + 1;
-      }
+    } else if (!hasModulePorts && assign.bitIndex !== null) {
+      group.msb = Math.max(group.msb, assign.bitIndex);
+      group.lsb = Math.min(group.lsb, assign.bitIndex);
+      group.width = group.msb - group.lsb + 1;
     }
 
     const bitKey = assign.bitIndex ?? 0;
-    group.pins[bitKey] = assign.pinLocation;
+    if (bitKey >= group.lsb && bitKey <= group.msb) {
+      group.pins[bitKey] = assign.pinLocation;
+    }
   }
 
   return Array.from(groups.values());

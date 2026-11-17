@@ -1,0 +1,12 @@
+{
+  "testId": "LIM-005",
+  "name": "Generate For-Loop Elaboration Test",
+  "topModule": "generate_block",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "vectors": [
+    { "inputs": { "SW": 0 }, "expectedOutputs": { "LEDR": 255 } },
+    { "inputs": { "SW": 170 }, "expectedOutputs": { "LEDR": 85 } },
+    { "inputs": { "SW": 255 }, "expectedOutputs": { "LEDR": 0 } }
+  ]
+}

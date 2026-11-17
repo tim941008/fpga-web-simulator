@@ -1,0 +1,12 @@
+{
+  "testId": "FSM-001",
+  "name": "2-State Moore FSM (IDLE / ACTIVE)",
+  "topModule": "fsm_2state",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "sequence": [
+    { "inputs": { "KEY": 1, "SW": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 1 } },
+    { "inputs": { "KEY": 0, "SW": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "testId": "FSM-002",
+  "name": "4-State One-Hot Output FSM (S0->S1->S2->S3->S0)",
+  "topModule": "fsm_4state",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "sequence": [
+    { "inputs": { "KEY": 1, "SW": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 1 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 2 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 4 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 8 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 1 } }
+  ]
+}

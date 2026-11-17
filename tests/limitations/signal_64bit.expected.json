@@ -1,0 +1,12 @@
+{
+  "testId": "LIM-001",
+  "name": "64-Bit Boundary Signal Test",
+  "topModule": "signal_64bit",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "expectedPortExposed": true,
+  "sequence": [
+    { "inputs": { "KEY": 1 }, "stepCycles": 1, "expectedOutputs": { "wide_out": "0x8000000000000001" } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 1, "expectedOutputs": { "wide_out": "0x8000000000000002" } }
+  ]
+}

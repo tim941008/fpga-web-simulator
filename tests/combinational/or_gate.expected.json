@@ -1,0 +1,13 @@
+{
+  "testId": "COMB-002",
+  "name": "2-Input OR Gate",
+  "topModule": "or_gate",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "vectors": [
+    { "inputs": { "SW": 0 }, "expectedOutputs": { "LEDR": 0 } },
+    { "inputs": { "SW": 1 }, "expectedOutputs": { "LEDR": 1 } },
+    { "inputs": { "SW": 2 }, "expectedOutputs": { "LEDR": 1 } },
+    { "inputs": { "SW": 3 }, "expectedOutputs": { "LEDR": 1 } }
+  ]
+}

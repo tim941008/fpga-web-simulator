@@ -1,0 +1,8 @@
+{
+  "testId": "LIM-004",
+  "name": "2D Unpacked Memory Array Limitation Test",
+  "topModule": "multidim_array",
+  "expectedWasmCodegen": "PASS_UNINITIALIZED_HIDE_INTERNAL",
+  "expectedInternalSignalVisible": false,
+  "reason": "Uninitialized 2D unpacked array compiles in Verilator WASM (60ms + 3ms), but FpgaRuntime filters out all unpacked arrays from internalSignals and HDLModuleWASM throws 'multidimensional arrays not supported' if initialized via initarray"
+}

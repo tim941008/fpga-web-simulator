@@ -1,0 +1,13 @@
+{
+  "testId": "DEP-001",
+  "name": "GitHub Pages Live Deployment & WASM Asset Integrity",
+  "liveUrl": "https://tim941008.github.io/fpga-web-simulator/",
+  "requiredAssets": [
+    "index.html",
+    "verilator/verilator-worker.js",
+    "verilator/verilator_bin.js",
+    "verilator/verilator_bin.wasm"
+  ],
+  "expectedHttpStatus": 200,
+  "expectedRelativeBase": "./"
+}

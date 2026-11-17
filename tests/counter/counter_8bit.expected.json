@@ -1,0 +1,13 @@
+{
+  "testId": "CNT-001",
+  "name": "8-Bit Synchronous Up-Counter with Enable & Reset",
+  "topModule": "counter_8bit",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "sequence": [
+    { "inputs": { "KEY": 1, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 5, "expectedOutputs": { "LEDR": 5 } },
+    { "inputs": { "KEY": 0, "SW": 0 }, "stepCycles": 3, "expectedOutputs": { "LEDR": 5 } },
+    { "inputs": { "KEY": 1, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } }
+  ]
+}

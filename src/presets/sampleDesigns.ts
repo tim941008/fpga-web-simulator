@@ -140,10 +140,10 @@ set_location_assignment PIN_P11 -to CLOCK_50
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to CLOCK_50
 
 # Push Buttons (KEY)
-set_location_assignment PIN_B8 -to KEY[0]
-set_location_assignment PIN_A7 -to KEY[1]
-set_location_assignment PIN_B9 -to KEY[2]
-set_location_assignment PIN_A8 -to KEY[3]
+set_location_assignment PIN_B8  -to KEY[0]
+set_location_assignment PIN_A7  -to KEY[1]
+set_location_assignment PIN_B9  -to KEY[2]
+set_location_assignment PIN_B15 -to KEY[3]
 
 # Slide Switches (SW)
 set_location_assignment PIN_C10 -to SW[0]

@@ -1,0 +1,13 @@
+{
+  "testId": "LIM-007",
+  "name": "$readmemh External File Initialization Test",
+  "topModule": "readmemh_rom",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "vectors": [
+    { "inputs": { "SW": 0 }, "expectedOutputs": { "LEDR": 165 } },
+    { "inputs": { "SW": 1 }, "expectedOutputs": { "LEDR": 90 } },
+    { "inputs": { "SW": 2 }, "expectedOutputs": { "LEDR": 240 } },
+    { "inputs": { "SW": 3 }, "expectedOutputs": { "LEDR": 15 } }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "testId": "MAT-003",
+  "name": "Animated Frame-Shifting 16x16 Matrix Pattern",
+  "topModule": "matrix_animated",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "sequence": [
+    { "inputs": { "KEY": 1 }, "stepCycles": 1, "expectedOutputs": { "MATRIX_ROW": 1, "MATRIX_COL": 15 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 4, "expectedOutputs": { "MATRIX_ROW": 16, "MATRIX_COL": 240 } },
+    { "inputs": { "KEY": 0 }, "stepCycles": 12, "expectedOutputs": { "MATRIX_ROW": 1, "MATRIX_COL": 15 } }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "testId": "QSF-003",
+  "name": "QSF With Unconnected / Orphan Signals Not in Verilog Module",
+  "verilogModulePorts": ["SW", "LEDR"],
+  "qsfAssignedBaseNames": ["SW", "LEDR", "UNUSED_HEX0", "ORPHAN_KEY"],
+  "expectedMatchedBaseNames": ["SW", "LEDR"],
+  "expectedUnusedBaseNames": ["UNUSED_HEX0", "ORPHAN_KEY"],
+  "expectedPhantomControlsCreated": false
+}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BoardControlGroup } from '../types/fpga';
 import { SevenSegmentDisplay } from './SevenSegmentDisplay';
 import { Cpu, Sliders, Radio, ToggleLeft } from 'lucide-react';
+import { TranslationDict } from '../i18n/translations';
 
 interface BoardViewProps {
   topModule: string;
@@ -9,6 +10,7 @@ interface BoardViewProps {
   partNumber?: string;
   groups: BoardControlGroup[];
   signals: Record<string, bigint>;
+  t: TranslationDict;
   onToggleInputBit: (signalName: string, bitIndex: number) => void;
   onSetInputBit: (signalName: string, bitIndex: number, bitVal: 0 | 1) => void;
 }
@@ -19,6 +21,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
   partNumber,
   groups,
   signals,
+  t,
   onToggleInputBit,
   onSetInputBit,
 }) => {
@@ -38,42 +41,43 @@ export const BoardView: React.FC<BoardViewProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-br from-emerald-950/50 via-slate-900 to-slate-950 border-2 border-emerald-800/50 rounded-2xl p-5 shadow-2xl relative overflow-hidden">
+    <div className="bg-gradient-to-br from-emerald-950/60 via-slate-900 to-indigo-950/40 border-2 border-emerald-600/40 rounded-2xl p-5 shadow-2xl relative overflow-hidden">
       {/* PCB Corner Mounting Holes */}
-      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-500/60 absolute top-3 left-3" />
-      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-500/60 absolute top-3 right-3" />
-      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-500/60 absolute bottom-3 left-3" />
-      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-500/60 absolute bottom-3 right-3" />
+      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute top-3 left-3 shadow-inner" />
+      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute top-3 right-3 shadow-inner" />
+      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute bottom-3 left-3 shadow-inner" />
+      <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute bottom-3 right-3 shadow-inner" />
 
       {/* Board Header Silkscreen */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-4 mb-5 border-b border-emerald-800/40 px-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-emerald-700/40 px-2">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-slate-950 border border-slate-700 flex items-center justify-center shadow-inner">
+          <div className="w-10 h-10 rounded-xl bg-slate-950 border border-emerald-500/40 flex items-center justify-center shadow-inner">
             <Cpu className="w-6 h-6 text-emerald-400" />
           </div>
           <div>
             <div className="text-xs font-mono uppercase tracking-widest text-emerald-400 font-bold">
-              {deviceFamily ?? 'Intel / Altera FPGA Board'} • {partNumber ?? 'QSF Auto-Mapped'}
+              {deviceFamily ?? t.boardDefaultFamily} • {partNumber ?? t.boardDefaultPart}
             </div>
             <div className="text-sm font-semibold text-slate-100">
-              Top Entity: <span className="font-mono text-cyan-300">{topModule}</span>
+              {t.topEntityLabel}{' '}
+              <span className="font-mono text-cyan-300">{topModule}</span>
             </div>
           </div>
         </div>
 
         {/* Polarity & Button Mode Toggles */}
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
           <button
             onClick={() => setHexActiveLow((v) => !v)}
-            className="px-2.5 py-1 rounded bg-slate-900/90 hover:bg-slate-800 border border-slate-700 font-mono text-slate-300 transition"
+            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-rose-500/35 font-mono text-rose-200 transition"
           >
-            7-Seg: {hexActiveLow ? 'Active-LOW (0=ON)' : 'Active-HIGH (1=ON)'}
+            {t.segPolarityLabel} {hexActiveLow ? t.segActiveLow : t.segActiveHigh}
           </button>
           <button
             onClick={() => setKeyMomentary((v) => !v)}
-            className="px-2.5 py-1 rounded bg-slate-900/90 hover:bg-slate-800 border border-slate-700 font-mono text-slate-300 transition"
+            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-amber-500/35 font-mono text-amber-200 transition"
           >
-            KEY Mode: {keyMomentary ? 'Momentary Push' : 'Toggle Latch'}
+            {t.keyModeLabel} {keyMomentary ? t.keyMomentary : t.keyToggle}
           </button>
         </div>
       </div>
@@ -82,9 +86,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
         {/* 1. 7-Segment Displays (HEX) */}
         {hexGroups.length > 0 && (
           <div>
-            <div className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-2.5 flex items-center gap-1.5">
+            <div className="text-xs font-mono uppercase tracking-wider text-rose-300 mb-2.5 flex items-center gap-1.5 font-semibold">
               <Radio className="w-3.5 h-3.5 text-rose-400" />
-              <span>7-Segment Displays (HEX)</span>
+              <span>{t.sectionHex}</span>
             </div>
             <div className="flex flex-wrap gap-3">
               {hexGroups.map((group) => (
@@ -103,9 +107,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
         {/* 2. Discrete LEDs (LEDR / LEDG) */}
         {ledGroups.length > 0 && (
           <div>
-            <div className="text-xs font-mono uppercase tracking-wider text-slate-400 mb-2.5 flex items-center gap-1.5">
+            <div className="text-xs font-mono uppercase tracking-wider text-amber-300 mb-2.5 flex items-center gap-1.5 font-semibold">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block shadow-[0_0_8px_#f43f5e]" />
-              <span>Board Status LEDs</span>
+              <span>{t.sectionLeds}</span>
             </div>
             <div className="space-y-3">
               {ledGroups.map((group) => {
@@ -116,13 +120,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 return (
                   <div
                     key={group.baseName}
-                    className="bg-slate-950/80 border border-slate-800/90 rounded-xl p-3"
+                    className="bg-slate-950/85 border border-slate-800 rounded-xl p-3.5 shadow-inner"
                   >
-                    <div className="text-xs font-mono text-slate-400 mb-2 flex justify-between">
-                      <span>
+                    <div className="text-xs font-mono text-slate-300 mb-2.5 flex justify-between">
+                      <span className="font-semibold text-emerald-300">
                         {group.baseName}[{group.msb}:{group.lsb}]
                       </span>
-                      <span className="text-slate-500">
+                      <span className="text-cyan-300">
                         0x
                         {(signals[group.baseName] ?? 0n)
                           .toString(16)
@@ -136,7 +140,11 @@ export const BoardView: React.FC<BoardViewProps> = ({
                         return (
                           <div
                             key={bitIdx}
-                            title={pin ? `${group.baseName}[${bitIdx}] — ${pin}` : `${group.baseName}[${bitIdx}]`}
+                            title={
+                              pin
+                                ? `${group.baseName}[${bitIdx}] — ${pin}`
+                                : `${group.baseName}[${bitIdx}]`
+                            }
                             className="flex flex-col items-center min-w-[38px]"
                           >
                             <div
@@ -152,7 +160,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               [{bitIdx}]
                             </span>
                             {pin && (
-                              <span className="text-[9px] font-mono text-slate-500">
+                              <span className="text-[9px] font-mono text-emerald-400/80">
                                 {pin.replace('PIN_', '')}
                               </span>
                             )}
@@ -171,14 +179,14 @@ export const BoardView: React.FC<BoardViewProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Slide Switches */}
           <div className="lg:col-span-2 space-y-3">
-            <div className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <div className="text-xs font-mono uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 font-semibold">
               <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Slide Switches (SW)</span>
+              <span>{t.sectionSwitches}</span>
             </div>
 
             {swGroups.length === 0 ? (
-              <div className="text-xs text-slate-500 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
-                No SW inputs detected in module or QSF.
+              <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+                {t.noSwDetected}
               </div>
             ) : (
               swGroups.map((group) => {
@@ -188,7 +196,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 return (
                   <div
                     key={group.baseName}
-                    className="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5"
+                    className="bg-slate-950/85 border border-cyan-500/20 rounded-xl p-3.5 shadow-inner"
                   >
                     <div className="flex flex-wrap gap-2.5">
                       {indices.map((bitIdx) => {
@@ -201,8 +209,8 @@ export const BoardView: React.FC<BoardViewProps> = ({
                             onClick={() => onToggleInputBit(group.baseName, bitIdx)}
                             title={
                               pin
-                                ? `${group.baseName}[${bitIdx}] (${pin}) — Click to toggle`
-                                : `${group.baseName}[${bitIdx}] — Click to toggle`
+                                ? `${group.baseName}[${bitIdx}] (${pin}) — ${t.clickToToggle}`
+                                : `${group.baseName}[${bitIdx}] — ${t.clickToToggle}`
                             }
                             className="flex flex-col items-center group focus:outline-none"
                           >
@@ -210,8 +218,8 @@ export const BoardView: React.FC<BoardViewProps> = ({
                             <div
                               className={`w-7 h-12 rounded-md p-1 flex flex-col justify-between border transition ${
                                 active
-                                  ? 'bg-emerald-950/80 border-emerald-500/70'
-                                  : 'bg-slate-900 border-slate-700'
+                                  ? 'bg-emerald-950/90 border-emerald-400/80'
+                                  : 'bg-slate-900 border-slate-700 hover:border-cyan-500/50'
                               }`}
                             >
                               <div
@@ -231,14 +239,14 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               SW{bitIdx}
                             </span>
                             <span
-                              className={`text-[9px] font-mono ${
+                              className={`text-[9px] font-mono font-bold ${
                                 active ? 'text-emerald-400' : 'text-slate-500'
                               }`}
                             >
                               {active ? '1' : '0'}
                             </span>
                             {pin && (
-                              <span className="text-[9px] font-mono text-slate-500">
+                              <span className="text-[9px] font-mono text-cyan-400/75">
                                 {pin.replace('PIN_', '')}
                               </span>
                             )}
@@ -254,14 +262,14 @@ export const BoardView: React.FC<BoardViewProps> = ({
 
           {/* Push Buttons (KEY) */}
           <div className="space-y-3">
-            <div className="text-xs font-mono uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <div className="text-xs font-mono uppercase tracking-wider text-amber-300 flex items-center gap-1.5 font-semibold">
               <ToggleLeft className="w-3.5 h-3.5 text-amber-400" />
-              <span>Push Buttons (KEY)</span>
+              <span>{t.sectionButtons}</span>
             </div>
 
             {keyGroups.length === 0 ? (
-              <div className="text-xs text-slate-500 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
-                No KEY inputs detected in module or QSF.
+              <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+                {t.noKeyDetected}
               </div>
             ) : (
               keyGroups.map((group) => {
@@ -271,7 +279,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 return (
                   <div
                     key={group.baseName}
-                    className="bg-slate-950/80 border border-slate-800 rounded-xl p-3.5"
+                    className="bg-slate-950/85 border border-amber-500/20 rounded-xl p-3.5 shadow-inner"
                   >
                     <div className="flex flex-wrap gap-3 justify-center">
                       {indices.map((bitIdx) => {
@@ -302,7 +310,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               className={`w-12 h-12 rounded-xl border-2 flex items-center justify-center transition transform ${
                                 pressed
                                   ? 'bg-amber-500 border-amber-200 scale-95 shadow-[0_0_14px_#f59e0b]'
-                                  : 'bg-slate-800 border-slate-600 hover:border-slate-500'
+                                  : 'bg-slate-800 border-slate-600 hover:border-amber-400/60'
                               }`}
                             >
                               <div
@@ -315,10 +323,10 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               {group.baseName}[{bitIdx}]
                             </span>
                             <span className="text-[9px] font-mono text-slate-400">
-                              Val: {pressed ? '1' : '0'}
+                              {t.valLabel} {pressed ? '1' : '0'}
                             </span>
                             {pin && (
-                              <span className="text-[9px] font-mono text-slate-500">
+                              <span className="text-[9px] font-mono text-amber-400/75">
                                 {pin.replace('PIN_', '')}
                               </span>
                             )}

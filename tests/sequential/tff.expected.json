@@ -1,0 +1,13 @@
+{
+  "testId": "SEQ-002",
+  "name": "T Flip-Flop (Toggle Register)",
+  "topModule": "tff",
+  "expectedCompile": "PASS",
+  "expectedBackend": "verilator-wasm",
+  "sequence": [
+    { "inputs": { "KEY": 1, "SW": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 1 } },
+    { "inputs": { "KEY": 0, "SW": 1 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } },
+    { "inputs": { "KEY": 0, "SW": 0 }, "stepCycles": 1, "expectedOutputs": { "LEDR": 0 } }
+  ]
+}

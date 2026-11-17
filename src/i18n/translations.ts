@@ -1,0 +1,218 @@
+export type Language = 'en' | 'zh-TW';
+
+export const STORAGE_KEY = 'web_fpga_sim_lang';
+
+export function getInitialLanguage(): Language {
+  try {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (saved === 'en' || saved === 'zh-TW') return saved;
+  } catch {
+    // ignore storage errors
+  }
+  return 'en';
+}
+
+export function saveLanguage(lang: Language): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, lang);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export const TRANSLATIONS = {
+  en: {
+    appTitle: 'Web FPGA Simulator',
+    appBadge: 'Verilator WASM + Quartus QSF',
+    topModuleLabel: 'Top Module:',
+    topSubtitle: 'Compiled in-browser via Verilator WebAssembly',
+    presetLabel: 'Preset:',
+    uploadVerilog: 'Upload .v / .hex',
+    uploadQsf: 'Upload .qsf',
+    filesSuffix: 'file(s)',
+    // Clock Controls
+    simBackend: 'Sim Backend',
+    backendCompiling: 'Compiling with Verilator…',
+    backendWasm: 'Verilator → WebAssembly',
+    backendJs: 'Verilator → JS (fallback)',
+    backendNone: 'Not compiled',
+    clockLabel: 'Clock',
+    clockCombinational: 'combinational',
+    clockHigh: 'HIGH (1)',
+    clockLow: 'LOW (0)',
+    cycleLabel: 'Cycle',
+    compileBtn: 'Compile',
+    compileTooltip: 'Re-run Verilator on the current sources',
+    runClock: 'Run Clock',
+    pauseClock: 'Pause Clock',
+    stepCycle: 'Step Cycle',
+    stepCycleTooltip: 'Advance 1 full clock cycle (0 → 1 → 0)',
+    stepEdge: 'Step Edge',
+    stepEdgeTooltip: 'Toggle single clock edge (half-cycle)',
+    resetBtn: 'Reset',
+    resetTooltip: 'Power-cycle and reset the Verilated model',
+    freqLabel: 'Freq:',
+    // Compiler banner
+    compilingFirstRun: 'Running Verilator (downloading & compiling ~6 MB verilator_bin.wasm)…',
+    compilingCached: 'Compiling Verilog RTL with Verilator WASM…',
+    errorsCount: 'error(s)',
+    warningsCount: 'warning(s)',
+    pinConflictsCount: 'pin conflict(s)',
+    // Tabs
+    tabBoard: 'FPGA Board & 16×16 Matrix',
+    tabCode: 'Verilog / Memory Editor',
+    tabQsf: 'QSF Pin Mapper',
+    pinsUnit: 'pins',
+    portsUnit: 'ports',
+    internalSignalsUnit: 'internal signals',
+    qsfPinsUnit: 'QSF pins',
+    // Board View
+    boardDefaultFamily: 'Intel / Altera FPGA Board',
+    boardDefaultPart: 'QSF Auto-Mapped',
+    topEntityLabel: 'Top Entity:',
+    segPolarityLabel: '7-Seg:',
+    segActiveLow: 'Active-LOW (0=ON)',
+    segActiveHigh: 'Active-HIGH (1=ON)',
+    keyModeLabel: 'KEY Mode:',
+    keyMomentary: 'Momentary Push',
+    keyToggle: 'Toggle Latch',
+    sectionHex: '7-Segment Displays (HEX)',
+    sectionLeds: 'Board Status LEDs',
+    sectionSwitches: 'Slide Switches (SW)',
+    sectionButtons: 'Push Buttons (KEY)',
+    noSwDetected: 'No SW inputs in active module.',
+    noKeyDetected: 'No KEY inputs in active module.',
+    clickToToggle: 'Click to toggle',
+    valLabel: 'Val:',
+    // Matrix Viewer
+    matrixTitle: '16×16 LED Dot-Matrix Viewer',
+    matrixUnconnected: 'No MATRIX_ROW / MATRIX_COL ports in active module',
+    povHold: 'POV Scan Hold:',
+    onLabel: 'ON',
+    offLabel: 'OFF',
+    colPolarity: 'Col Polarity:',
+    activeLowShort: 'Active-LOW',
+    activeHighShort: 'Active-HIGH',
+    clearBtn: 'Clear',
+    // Editors & QSF
+    editorAutoCompileNote: 'Edits re-compile automatically via Verilator WASM.',
+    addMemFileBtn: '+ Add rom_init.hex',
+    qsfSourceTitle: 'Quartus QSF Source',
+    parsedPinsTitle: 'Parsed Pin Assignments',
+    pinConflictBanner: 'Duplicate Physical Pin Conflict Detected:',
+    colSignal: 'Signal',
+    colPin: 'Pin',
+    colCategory: 'Category',
+    colStatus: 'Status',
+    statusMatched: 'Matched',
+    statusUnused: 'Unused',
+    statusConflict: 'Pin Conflict',
+    // Signal Monitor
+    signalMonitorTitle: 'Signal Monitor & Logic Waveform Analyzer',
+    colDirection: 'Dir',
+    colWidth: 'Width',
+    colQsfPin: 'QSF Pin Mapping',
+    colCurrentVal: 'Current Value',
+    colWaveform: 'Waveform Trace (Last 24 Samples)',
+    internalVirtual: 'Internal / Virtual',
+    emptyWaveformHint: 'Step clock or toggle inputs to capture waveform transitions',
+  },
+  'zh-TW': {
+    appTitle: 'Web FPGA 數位電路模擬器',
+    appBadge: 'Verilator WASM + Quartus QSF',
+    topModuleLabel: '頂層模組:',
+    topSubtitle: '於瀏覽器內透過 Verilator WebAssembly 即時編譯模擬',
+    presetLabel: '範例設計:',
+    uploadVerilog: '上傳 .v / .hex',
+    uploadQsf: '上傳 .qsf',
+    filesSuffix: '個檔案',
+    // Clock Controls
+    simBackend: '模擬核心',
+    backendCompiling: 'Verilator 編譯中…',
+    backendWasm: 'Verilator → WebAssembly',
+    backendJs: 'Verilator → JS (備援)',
+    backendNone: '尚未編譯',
+    clockLabel: '時脈',
+    clockCombinational: '純組合邏輯',
+    clockHigh: '高準位 (1)',
+    clockLow: '低準位 (0)',
+    cycleLabel: '週期',
+    compileBtn: '重新編譯',
+    compileTooltip: '使用 Verilator 重新編譯目前設計',
+    runClock: '連續執行',
+    pauseClock: '暫停時脈',
+    stepCycle: '單步週期',
+    stepCycleTooltip: '推進 1 個完整時脈週期 (0 → 1 → 0)',
+    stepEdge: '單步邊緣',
+    stepEdgeTooltip: '切換單一時脈邊緣 (半週期)',
+    resetBtn: '重置',
+    resetTooltip: '重置暫存器與模擬狀態',
+    freqLabel: '頻率:',
+    // Compiler banner
+    compilingFirstRun: '正在啟動 Verilator (首次執行需載入 ~6 MB verilator_bin.wasm)…',
+    compilingCached: '正在使用 Verilator WASM 編譯 Verilog RTL…',
+    errorsCount: '個錯誤',
+    warningsCount: '個警告',
+    pinConflictsCount: '處腳位衝突',
+    // Tabs
+    tabBoard: 'FPGA 開發板與 16×16 點陣',
+    tabCode: 'Verilog / 記憶體編輯器',
+    tabQsf: 'QSF 腳位映射表',
+    pinsUnit: '腳位',
+    portsUnit: '個連接埠',
+    internalSignalsUnit: '個內部訊號',
+    qsfPinsUnit: '個 QSF 腳位',
+    // Board View
+    boardDefaultFamily: 'Intel / Altera FPGA 開發板',
+    boardDefaultPart: 'QSF 自動映射',
+    topEntityLabel: '頂層實體:',
+    segPolarityLabel: '七段極性:',
+    segActiveLow: '低準位點亮 (0=ON)',
+    segActiveHigh: '高準位點亮 (1=ON)',
+    keyModeLabel: '按鍵模式:',
+    keyMomentary: '瞬時按壓 (Push)',
+    keyToggle: '切換鎖定 (Latch)',
+    sectionHex: '七段顯示器 (HEX)',
+    sectionLeds: '開發板狀態 LED',
+    sectionSwitches: '撥動開關 (SW)',
+    sectionButtons: '按壓按鈕 (KEY)',
+    noSwDetected: '目前模組未使用 SW 開關輸入。',
+    noKeyDetected: '目前模組未使用 KEY 按鈕輸入。',
+    clickToToggle: '點擊切換狀態',
+    valLabel: '數值:',
+    // Matrix Viewer
+    matrixTitle: '16×16 LED 點陣顯示器',
+    matrixUnconnected: '目前模組未連接 MATRIX_ROW / MATRIX_COL',
+    povHold: '視覺暫留 (POV):',
+    onLabel: '開啟',
+    offLabel: '關閉',
+    colPolarity: '行極性 (Col):',
+    activeLowShort: '低準位有效',
+    activeHighShort: '高準位有效',
+    clearBtn: '清除畫面',
+    // Editors & QSF
+    editorAutoCompileNote: '修改程式碼後將自動透過 Verilator WASM 重新編譯。',
+    addMemFileBtn: '+ 新增 rom_init.hex',
+    qsfSourceTitle: 'Quartus QSF 原始設定',
+    parsedPinsTitle: '已解析之腳位分配表',
+    pinConflictBanner: '偵測到重複分配之實體腳位衝突:',
+    colSignal: '訊號名稱',
+    colPin: '實體腳位',
+    colCategory: '元件類別',
+    colStatus: '連接狀態',
+    statusMatched: '已連接',
+    statusUnused: '未使用',
+    statusConflict: '腳位衝突',
+    // Signal Monitor
+    signalMonitorTitle: '訊號監看與邏輯波形分析儀',
+    colDirection: '方向',
+    colWidth: '位元寬度',
+    colQsfPin: 'QSF 腳位映射',
+    colCurrentVal: '目前數值',
+    colWaveform: '數位波形追蹤 (最近 24 筆取樣)',
+    internalVirtual: '內部暫存 / 虛擬訊號',
+    emptyWaveformHint: '推進時脈或切換開關以記錄數位波形變化',
+  },
+} as const;
+
+export type TranslationDict = (typeof TRANSLATIONS)['en'];
