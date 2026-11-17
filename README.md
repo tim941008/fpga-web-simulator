@@ -16,15 +16,7 @@ A browser-based FPGA hardware simulator built with **React**, **TypeScript**, **
 
 ## Screenshots
 
-> Add screenshots of the running application to `docs/screenshots/` and update the links below.
-
-| FPGA Board & 16×16 Matrix | Signal Monitor & Waveform Viewer |
-|---|---|
-| ![FPGA Board Placeholder](docs/screenshots/board-view.png) | ![Waveform Viewer Placeholder](docs/screenshots/waveform-viewer.png) |
-
-| Verilog RTL Editor | Quartus QSF Pin Mapper |
-|---|---|
-| ![Verilog Editor Placeholder](docs/screenshots/verilog-editor.png) | ![QSF Pin Mapper Placeholder](docs/screenshots/qsf-mapper.png) |
+Screenshots coming soon.
 
 ## Quick Start
 
