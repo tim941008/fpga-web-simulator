@@ -266,6 +266,7 @@ export const App: React.FC = () => {
 
     if (!result.runtime) {
       setBackendMode('none');
+      setRuntimePorts(null);
       setCompileInfo(
         `Verilator failed (${result.timings.verilatorMs.toFixed(0)} ms)`
       );
@@ -865,6 +866,9 @@ export const App: React.FC = () => {
               onChange={(e) => {
                 const text = e.target.value;
                 debounceCompileRef.current = true;
+                if (/\.(v|sv|vh|svh)$/i.test(verilogFiles[editIndex]?.name ?? '')) {
+                  setRuntimePorts(null);
+                }
                 setVerilogFiles((files) =>
                   files.map((f, i) =>
                     i === editIndex ? { ...f, content: text } : f
