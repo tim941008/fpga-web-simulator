@@ -10,7 +10,7 @@
  *           HDLModuleWASM (8bitworkshop + binaryen) ──► native WebAssembly model
  *               │      (falls back to HDLModuleJS if WASM codegen fails)
  *               ▼
- *           FpgaRuntime  ──► LED / HEX7SEG / Matrix16x16 (via QSF Pin Mapper)
+ *           FpgaRuntime  ──► LED / HEX7SEG / Matrix16x16 (via GUI I/O Pin Configuration)
  */
 import { PortDefinition } from '../types/fpga';
 import { VerilogXMLParser } from '../vendor/8bitworkshop/hdl/vxmlparser';

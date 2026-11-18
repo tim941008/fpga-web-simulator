@@ -6,8 +6,6 @@ import { TranslationDict } from '../i18n/translations';
 
 interface BoardViewProps {
   topModule: string;
-  deviceFamily?: string;
-  partNumber?: string;
   groups: BoardControlGroup[];
   signals: Record<string, bigint>;
   t: TranslationDict;
@@ -17,8 +15,6 @@ interface BoardViewProps {
 
 export const BoardView: React.FC<BoardViewProps> = ({
   topModule,
-  deviceFamily,
-  partNumber,
   groups,
   signals,
   t,
@@ -30,14 +26,89 @@ export const BoardView: React.FC<BoardViewProps> = ({
 
   const hexGroups = groups
     .filter((g) => g.category === 'HEX')
-    .sort((a, b) => b.baseName.localeCompare(a.baseName));
-  const ledGroups = groups.filter((g) => g.category === 'LED');
+    .sort((a, b) => b.componentId.localeCompare(a.componentId));
+  const redLedGroups = groups.filter((g) => g.category === 'LEDR');
+  const greenLedGroups = groups.filter((g) => g.category === 'LEDG');
   const swGroups = groups.filter((g) => g.category === 'SW');
   const keyGroups = groups.filter((g) => g.category === 'KEY');
 
-  const getBit = (sigName: string, bit: number): boolean => {
+  const getBit = (sigName: string, bitOffset: number): boolean => {
     const val = signals[sigName] ?? 0n;
-    return ((val >> BigInt(bit)) & 1n) === 1n;
+    return ((val >> BigInt(bitOffset)) & 1n) === 1n;
+  };
+
+  const buildVisibleBits = (group: BoardControlGroup): Array<{ displayBit: number; runtimeBit: number }> => {
+    const count = Math.min(group.width, group.maxWidth);
+    const items: Array<{ displayBit: number; runtimeBit: number }> = [];
+    for (let offset = count - 1; offset >= 0; offset--) {
+      items.push({
+        displayBit: group.lsb + offset,
+        runtimeBit: offset,
+      });
+    }
+    return items;
+  };
+
+  const renderLedBank = (
+    group: BoardControlGroup,
+    color: 'red' | 'green'
+  ) => {
+    const isGreen = color === 'green';
+    const visibleBits = buildVisibleBits(group);
+    const isClamped = group.width > group.maxWidth;
+
+    return (
+      <div
+        key={`${group.componentId}-${group.baseName}`}
+        className="bg-slate-950/85 border border-slate-800 rounded-xl p-3.5 shadow-inner"
+      >
+        <div className="text-xs font-mono text-slate-300 mb-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className={isGreen ? 'font-semibold text-emerald-300' : 'font-semibold text-rose-300'}>
+              {group.componentId}
+            </span>
+            <span className="text-slate-500">←</span>
+            <span className="font-semibold text-slate-200">
+              {group.baseName}
+              {group.width > 1 ? `[${group.msb}:${group.lsb}]` : ''}
+            </span>
+            {isClamped && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
+                {group.maxWidth}/{group.width}-bit ({t.widthClampedBadge})
+              </span>
+            )}
+          </div>
+          <span className="text-cyan-300">
+            0x{(signals[group.baseName] ?? 0n).toString(16).toUpperCase()}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2.5">
+          {visibleBits.map(({ displayBit, runtimeBit }) => {
+            const on = getBit(group.baseName, runtimeBit);
+            return (
+              <div
+                key={displayBit}
+                title={`${group.componentId}[${runtimeBit}] ← ${group.baseName}${group.width > 1 ? `[${displayBit}]` : ''}`}
+                className="flex flex-col items-center min-w-[38px]"
+              >
+                <div
+                  className={`w-5 h-5 rounded-full border transition-all duration-75 ${
+                    on
+                      ? isGreen
+                        ? 'bg-emerald-400 border-emerald-200 shadow-[0_0_12px_#34d399]'
+                        : 'bg-rose-500 border-rose-200 shadow-[0_0_12px_#f43f5e]'
+                      : 'bg-slate-900 border-slate-700'
+                  }`}
+                />
+                <span className="text-[10px] font-mono text-slate-300 mt-1">
+                  [{displayBit}]
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -56,7 +127,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
           </div>
           <div>
             <div className="text-xs font-mono uppercase tracking-widest text-emerald-400 font-bold">
-              {deviceFamily ?? t.boardDefaultFamily} • {partNumber ?? t.boardDefaultPart}
+              {t.boardDefaultFamily} • {t.boardDefaultPart}
             </div>
             <div className="text-sm font-semibold text-slate-100">
               {t.topEntityLabel}{' '}
@@ -93,87 +164,50 @@ export const BoardView: React.FC<BoardViewProps> = ({
             <div className="flex flex-wrap gap-3">
               {hexGroups.map((group) => (
                 <SevenSegmentDisplay
-                  key={group.baseName}
-                  label={group.baseName}
+                  key={`${group.componentId}-${group.baseName}`}
+                  slotLabel={group.componentId}
+                  portName={group.baseName}
                   value={signals[group.baseName] ?? 0n}
                   activeLow={hexActiveLow}
-                  pins={group.pins}
                 />
               ))}
             </div>
           </div>
         )}
 
-        {/* 2. Discrete LEDs (LEDR / LEDG) */}
-        {ledGroups.length > 0 && (
+        {/* 2a. Red LEDs (LEDR) */}
+        {redLedGroups.length > 0 && (
           <div>
-            <div className="text-xs font-mono uppercase tracking-wider text-amber-300 mb-2.5 flex items-center gap-1.5 font-semibold">
+            <div className="text-xs font-mono uppercase tracking-wider text-rose-300 mb-2.5 flex items-center gap-1.5 font-semibold">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block shadow-[0_0_8px_#f43f5e]" />
-              <span>{t.sectionLeds}</span>
+              <span>{t.sectionRedLeds}</span>
             </div>
             <div className="space-y-3">
-              {ledGroups.map((group) => {
-                const isGreen = group.baseName.toUpperCase().includes('G');
-                const indices: number[] = [];
-                for (let b = group.msb; b >= group.lsb; b--) indices.push(b);
-
-                return (
-                  <div
-                    key={group.baseName}
-                    className="bg-slate-950/85 border border-slate-800 rounded-xl p-3.5 shadow-inner"
-                  >
-                    <div className="text-xs font-mono text-slate-300 mb-2.5 flex justify-between">
-                      <span className="font-semibold text-emerald-300">
-                        {group.baseName}[{group.msb}:{group.lsb}]
-                      </span>
-                      <span className="text-cyan-300">
-                        0x
-                        {(signals[group.baseName] ?? 0n)
-                          .toString(16)
-                          .toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2.5">
-                      {indices.map((bitIdx) => {
-                        const on = getBit(group.baseName, bitIdx);
-                        const pin = group.pins[bitIdx];
-                        return (
-                          <div
-                            key={bitIdx}
-                            title={
-                              pin
-                                ? `${group.baseName}[${bitIdx}] — ${pin}`
-                                : `${group.baseName}[${bitIdx}]`
-                            }
-                            className="flex flex-col items-center min-w-[38px]"
-                          >
-                            <div
-                              className={`w-5 h-5 rounded-full border transition-all duration-75 ${
-                                on
-                                  ? isGreen
-                                    ? 'bg-emerald-400 border-emerald-200 shadow-[0_0_12px_#34d399]'
-                                    : 'bg-rose-500 border-rose-200 shadow-[0_0_12px_#f43f5e]'
-                                  : 'bg-slate-900 border-slate-700'
-                              }`}
-                            />
-                            <span className="text-[10px] font-mono text-slate-300 mt-1">
-                              [{bitIdx}]
-                            </span>
-                            {pin && (
-                              <span className="text-[9px] font-mono text-emerald-400/80">
-                                {pin.replace('PIN_', '')}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+              {redLedGroups.map((group) => renderLedBank(group, 'red'))}
             </div>
           </div>
         )}
+
+        {/* 2b. Green LEDs (LEDG) */}
+        {greenLedGroups.length > 0 && (
+          <div>
+            <div className="text-xs font-mono uppercase tracking-wider text-emerald-300 mb-2.5 flex items-center gap-1.5 font-semibold">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block shadow-[0_0_8px_#34d399]" />
+              <span>{t.sectionGreenLeds}</span>
+            </div>
+            <div className="space-y-3">
+              {greenLedGroups.map((group) => renderLedBank(group, 'green'))}
+            </div>
+          </div>
+        )}
+
+        {hexGroups.length === 0 &&
+          redLedGroups.length === 0 &&
+          greenLedGroups.length === 0 && (
+            <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+              {t.noOutputsHint}
+            </div>
+          )}
 
         {/* 3. Slide Switches (SW) and Push Buttons (KEY) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -190,28 +224,37 @@ export const BoardView: React.FC<BoardViewProps> = ({
               </div>
             ) : (
               swGroups.map((group) => {
-                const indices: number[] = [];
-                for (let b = group.msb; b >= group.lsb; b--) indices.push(b);
+                const visibleBits = buildVisibleBits(group);
+                const isClamped = group.width > group.maxWidth;
 
                 return (
                   <div
-                    key={group.baseName}
+                    key={`${group.componentId}-${group.baseName}`}
                     className="bg-slate-950/85 border border-cyan-500/20 rounded-xl p-3.5 shadow-inner"
                   >
+                    <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        <span className="text-cyan-300 font-semibold">SW</span> →{' '}
+                        <span className="text-slate-200 font-semibold">
+                          {group.baseName}
+                          {group.width > 1 ? `[${group.msb}:${group.lsb}]` : ''}
+                        </span>
+                      </span>
+                      {isClamped && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
+                          {group.maxWidth}/{group.width}-bit ({t.widthClampedBadge})
+                        </span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-2.5">
-                      {indices.map((bitIdx) => {
-                        const active = getBit(group.baseName, bitIdx);
-                        const pin = group.pins[bitIdx];
+                      {visibleBits.map(({ displayBit, runtimeBit }) => {
+                        const active = getBit(group.baseName, runtimeBit);
                         return (
                           <button
-                            key={bitIdx}
+                            key={displayBit}
                             type="button"
-                            onClick={() => onToggleInputBit(group.baseName, bitIdx)}
-                            title={
-                              pin
-                                ? `${group.baseName}[${bitIdx}] (${pin}) — ${t.clickToToggle}`
-                                : `${group.baseName}[${bitIdx}] — ${t.clickToToggle}`
-                            }
+                            onClick={() => onToggleInputBit(group.baseName, runtimeBit)}
+                            title={`SW${runtimeBit} → ${group.baseName}${group.width > 1 ? `[${displayBit}]` : ''} — ${t.clickToToggle}`}
                             className="flex flex-col items-center group focus:outline-none"
                           >
                             {/* Physical Slide Switch Track */}
@@ -236,7 +279,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               />
                             </div>
                             <span className="text-[10px] font-mono text-slate-200 mt-1 font-semibold">
-                              SW{bitIdx}
+                              SW{runtimeBit}
                             </span>
                             <span
                               className={`text-[9px] font-mono font-bold ${
@@ -245,11 +288,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
                             >
                               {active ? '1' : '0'}
                             </span>
-                            {pin && (
-                              <span className="text-[9px] font-mono text-cyan-400/75">
-                                {pin.replace('PIN_', '')}
-                              </span>
-                            )}
                           </button>
                         );
                       })}
@@ -273,38 +311,51 @@ export const BoardView: React.FC<BoardViewProps> = ({
               </div>
             ) : (
               keyGroups.map((group) => {
-                const indices: number[] = [];
-                for (let b = group.msb; b >= group.lsb; b--) indices.push(b);
+                const visibleBits = buildVisibleBits(group);
+                const isClamped = group.width > group.maxWidth;
 
                 return (
                   <div
-                    key={group.baseName}
+                    key={`${group.componentId}-${group.baseName}`}
                     className="bg-slate-950/85 border border-amber-500/20 rounded-xl p-3.5 shadow-inner"
                   >
+                    <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        <span className="text-amber-300 font-semibold">KEY</span> →{' '}
+                        <span className="text-slate-200 font-semibold">
+                          {group.baseName}
+                          {group.width > 1 ? `[${group.msb}:${group.lsb}]` : ''}
+                        </span>
+                      </span>
+                      {isClamped && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
+                          {group.maxWidth}/{group.width}-bit
+                        </span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-3 justify-center">
-                      {indices.map((bitIdx) => {
-                        const pressed = getBit(group.baseName, bitIdx);
-                        const pin = group.pins[bitIdx];
+                      {visibleBits.map(({ displayBit, runtimeBit }) => {
+                        const pressed = getBit(group.baseName, runtimeBit);
 
                         return (
-                          <div key={bitIdx} className="flex flex-col items-center">
+                          <div key={displayBit} className="flex flex-col items-center">
                             <button
                               type="button"
                               onMouseDown={() => {
                                 if (keyMomentary) {
-                                  onSetInputBit(group.baseName, bitIdx, 1);
+                                  onSetInputBit(group.baseName, runtimeBit, 1);
                                 } else {
-                                  onToggleInputBit(group.baseName, bitIdx);
+                                  onToggleInputBit(group.baseName, runtimeBit);
                                 }
                               }}
                               onMouseUp={() => {
                                 if (keyMomentary) {
-                                  onSetInputBit(group.baseName, bitIdx, 0);
+                                  onSetInputBit(group.baseName, runtimeBit, 0);
                                 }
                               }}
                               onMouseLeave={() => {
                                 if (keyMomentary && pressed) {
-                                  onSetInputBit(group.baseName, bitIdx, 0);
+                                  onSetInputBit(group.baseName, runtimeBit, 0);
                                 }
                               }}
                               className={`w-12 h-12 rounded-xl border-2 flex items-center justify-center transition transform ${
@@ -320,16 +371,11 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               />
                             </button>
                             <span className="text-[11px] font-mono text-slate-200 mt-1.5 font-semibold">
-                              {group.baseName}[{bitIdx}]
+                              KEY{runtimeBit}
                             </span>
                             <span className="text-[9px] font-mono text-slate-400">
                               {t.valLabel} {pressed ? '1' : '0'}
                             </span>
-                            {pin && (
-                              <span className="text-[9px] font-mono text-amber-400/75">
-                                {pin.replace('PIN_', '')}
-                              </span>
-                            )}
                           </div>
                         );
                       })}

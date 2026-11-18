@@ -23,7 +23,7 @@ Thank you for your interest in contributing to **Web FPGA Simulator**!
 
 - Create a feature or fix branch from `main` (`git checkout -b feat/your-feature`).
 - Keep TypeScript strict-mode clean (`npm run build` must pass without errors).
-- Test your changes with both built-in presets (DE10-Lite Counter + Matrix and Combinational ALU) and verify `.v` / `.qsf` uploads work as expected.
+- Test your changes with the built-in presets (Complete Suite, Combinational ALU, and Custom Port Names Demo), run `npm test` and `npm run build`, and verify `.v` uploads and GUI I/O Pin Configuration work as expected.
 - Open a Pull Request with a clear summary of the change and screenshots if UI behavior is affected.
 
 ## Third-Party Notice

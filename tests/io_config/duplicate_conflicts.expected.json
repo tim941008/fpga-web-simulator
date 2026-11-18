@@ -1,0 +1,19 @@
+{
+  "testId": "IOCFG-003",
+  "name": "Duplicate Component Assignment & Resource Conflict Detection",
+  "category": "io_config",
+  "topModule": "duplicate_conflicts",
+  "assignments": {
+    "btn_a": "KEY",
+    "btn_b": "KEY",
+    "led_a": "LEDR",
+    "led_b": "LEDR",
+    "mat_r": "MATRIX_ROW"
+  },
+  "expectedSummary": {
+    "configuredCount": 1,
+    "conflictCount": 4,
+    "invalidCount": 0,
+    "resourceWarnings": ["MATRIX_MISSING_COL"]
+  }
+}

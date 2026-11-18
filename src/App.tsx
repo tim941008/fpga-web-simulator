@@ -1,11 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileCode,
-  FileSpreadsheet,
   FolderUp,
   Layers,
   Code2,
-  Pin,
+  SlidersHorizontal,
   CheckCircle2,
   AlertTriangle,
   XCircle,
@@ -13,23 +12,39 @@ import {
   Globe,
   Plus,
 } from 'lucide-react';
-import { buildBoardControlGroups, parseQsfFile } from './parsers/qsfParser';
 import { parseVerilogSource } from './parsers/verilogParser';
 import { CompileMessage, FpgaRuntime } from './sim/fpgaRuntime';
 import { SAMPLE_PRESETS } from './presets/sampleDesigns';
-import { PortDefinition, SignalHistoryEntry } from './types/fpga';
+import {
+  BoardComponentId,
+  PortDefinition,
+  PortIoAssignment,
+  SignalHistoryEntry,
+} from './types/fpga';
+import {
+  autoAssignPorts,
+  buildBoardMappings,
+  clearSavedIoConfig,
+  loadSavedIoConfig,
+  reconcileIoAssignments,
+  saveIoConfig,
+  validateIoConfig,
+} from './config/ioConfig';
 import { BackendMode, ClockControls } from './components/ClockControls';
 import { BoardView } from './components/BoardView';
 import { MatrixViewer } from './components/MatrixViewer';
 import { SignalMonitor } from './components/SignalMonitor';
+import { IoConfigPanel } from './components/IoConfigPanel';
 import {
+  formatValidationIssue,
   getInitialLanguage,
   Language,
   saveLanguage,
   TRANSLATIONS,
 } from './i18n/translations';
 
-const createEmpty16x16 = (): number[][] => Array.from({ length: 16 }, () => Array(16).fill(0));
+const createEmpty16x16 = (): number[][] =>
+  Array.from({ length: 16 }, () => Array(16).fill(0));
 
 const FRAME_MS = 16; // UI refresh period while the clock runs
 const HISTORY_LEN = 64;
@@ -37,6 +52,16 @@ const HISTORY_LEN = 64;
 interface SourceFile {
   name: string;
   content: string;
+}
+
+function getInitialIoAssignments(): Record<string, PortIoAssignment> {
+  const firstPreset = SAMPLE_PRESETS[0];
+  const parsed = parseVerilogSource([firstPreset.verilogCode]);
+  const saved = loadSavedIoConfig(parsed.topModule);
+  if (saved && Object.keys(saved).length > 0) {
+    return reconcileIoAssignments(saved, parsed.ports);
+  }
+  return autoAssignPorts(parsed.ports, firstPreset.defaultIoConfig);
 }
 
 export const App: React.FC = () => {
@@ -51,17 +76,24 @@ export const App: React.FC = () => {
   };
 
   // ------------------------------------------------------------------ sources
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(
+    SAMPLE_PRESETS[0].id
+  );
   const [verilogFiles, setVerilogFiles] = useState<SourceFile[]>([
-    { name: SAMPLE_PRESETS[0].verilogFilename, content: SAMPLE_PRESETS[0].verilogCode },
+    {
+      name: SAMPLE_PRESETS[0].verilogFilename,
+      content: SAMPLE_PRESETS[0].verilogCode,
+    },
   ]);
-  const [qsfFile, setQsfFile] = useState<SourceFile>({
-    name: SAMPLE_PRESETS[0].qsfFilename,
-    content: SAMPLE_PRESETS[0].qsfContent,
-  });
   const [editIndex, setEditIndex] = useState(0);
 
+  // -------------------------------------------------------- I/O configuration
+  const [ioAssignments, setIoAssignments] = useState<
+    Record<string, PortIoAssignment>
+  >(getInitialIoAssignments);
+
   // --------------------------------------------------------------- sim state
-  const [activeTab, setActiveTab] = useState<'board' | 'code' | 'qsf'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'io' | 'code'>('board');
   const [running, setRunning] = useState(false);
   const [clockHz, setClockHz] = useState(30);
   const [cycleCount, setCycleCount] = useState(0);
@@ -87,8 +119,12 @@ export const App: React.FC = () => {
   const compileSeq = useRef(0);
   const wasmCachedRef = useRef(false);
   const debounceCompileRef = useRef(false);
+  const prevTopModuleRef = useRef<string>(
+    parseVerilogSource([SAMPLE_PRESETS[0].verilogCode]).topModule
+  );
+  const skipNextReconcileRef = useRef(false);
 
-  // ------------------------------------------------------------ parsing / pin mapper
+  // ------------------------------------------------------------ Verilog parsing
   const verilogOnlyContents = useMemo(
     () =>
       verilogFiles
@@ -101,46 +137,75 @@ export const App: React.FC = () => {
     () => parseVerilogSource(verilogOnlyContents),
     [verilogOnlyContents]
   );
-  const qsfParsed = useMemo(() => parseQsfFile(qsfFile.content), [qsfFile]);
 
-  // Top module: QSF TOP_LEVEL_ENTITY if it exists in the sources, otherwise auto-detected
-  const topModule = useMemo(() => {
-    const all = verilogOnlyContents.join('\n');
-    const qsfTop = qsfParsed.topLevelEntity;
-    if (qsfTop && new RegExp(`\\bmodule\\s+${qsfTop}\\b`).test(all)) return qsfTop;
-    return verilogParsed.topModule;
-  }, [verilogOnlyContents, qsfParsed.topLevelEntity, verilogParsed.topModule]);
+  const topModule = verilogParsed.topModule;
 
-  // Ports reported by Verilator are authoritative; fall back to the parser before first compile
+  // Ports reported by Verilator are authoritative; fall back to parser before compile completes
   const ports = runtimePorts ?? verilogParsed.ports;
 
-  const controlGroups = useMemo(
-    () => buildBoardControlGroups(ports, qsfParsed.assignments),
-    [ports, qsfParsed.assignments]
-  );
-  const clockGroup = useMemo(() => controlGroups.find((g) => g.category === 'CLOCK') ?? null, [controlGroups]);
-  const matrixRowGroup = useMemo(
-    () => controlGroups.find((g) => g.category === 'MATRIX_ROW') ?? null,
-    [controlGroups]
-  );
-  const matrixColGroup = useMemo(
-    () => controlGroups.find((g) => g.category === 'MATRIX_COL') ?? null,
-    [controlGroups]
-  );
-  const clkName = clockGroup?.baseName ?? null;
-  const rowSigName = matrixRowGroup?.baseName ?? 'MATRIX_ROW';
-  const colSigName = matrixColGroup?.baseName ?? 'MATRIX_COL';
-  const hasMatrixPorts = Boolean(matrixRowGroup || matrixColGroup);
+  // Reconcile I/O assignments automatically when ports or topModule change
+  useEffect(() => {
+    if (skipNextReconcileRef.current) {
+      skipNextReconcileRef.current = false;
+      prevTopModuleRef.current = topModule;
+      return;
+    }
 
-  // --------------------------------------------------------------- matrix POV (fixes BUG-005)
+    const topChanged = prevTopModuleRef.current !== topModule;
+    prevTopModuleRef.current = topModule;
+
+    if (ports.length === 0) return;
+
+    if (topChanged) {
+      const saved = loadSavedIoConfig(topModule);
+      if (saved && Object.keys(saved).length > 0) {
+        setIoAssignments(reconcileIoAssignments(saved, ports));
+        return;
+      }
+      setIoAssignments((prev) =>
+        reconcileIoAssignments(prev, ports, { autoAssignIfNoOverlap: true })
+      );
+      return;
+    }
+
+    setIoAssignments((prev) =>
+      reconcileIoAssignments(prev, ports, { autoAssignIfNoOverlap: false })
+    );
+  }, [ports, topModule]);
+
+  // Persist user I/O assignments per topModule in localStorage
+  useEffect(() => {
+    if (topModule && ports.length > 0) {
+      saveIoConfig(topModule, ioAssignments);
+    }
+  }, [topModule, ports.length, ioAssignments]);
+
+  // Validate I/O assignments and build board & runtime mappings
+  const ioValidation = useMemo(
+    () => validateIoConfig(ports, ioAssignments),
+    [ports, ioAssignments]
+  );
+
+  const boardMappings = useMemo(
+    () => buildBoardMappings(ioValidation),
+    [ioValidation]
+  );
+
+  const controlGroups = boardMappings.controlGroups;
+  const clkName = boardMappings.clockSignalName;
+  const rowSigName = boardMappings.matrixRowSignal;
+  const colSigName = boardMappings.matrixColSignal;
+  const hasMatrixPorts = boardMappings.hasMatrixConnection;
+
+  // --------------------------------------------------------------- matrix POV
   const sampleMatrix = useCallback(
     (
       sig: Record<string, bigint>,
       usePov: boolean = povEnabled,
       invertCol: boolean = invertColPolarity
     ) => {
-      const rowVal = sig[rowSigName] ?? 0n;
-      const raw = sig[colSigName] ?? 0n;
+      const rowVal = rowSigName ? sig[rowSigName] ?? 0n : 0n;
+      const raw = colSigName ? sig[colSigName] ?? 0n : 0n;
       const colVal = invertCol ? ~raw & 0xffffn : raw & 0xffffn;
       const buf = matrixRef.current;
 
@@ -176,7 +241,15 @@ export const App: React.FC = () => {
     publishMatrix();
   }, [publishMatrix]);
 
-  // ---------------------------------------------------------------- compile (fixes BUG-009)
+  // Refresh matrix buffer immediately when matrix port bindings change
+  useEffect(() => {
+    matrixRef.current = createEmpty16x16();
+    sampleMatrix(signals, povEnabled, invertColPolarity);
+    publishMatrix();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowSigName, colSigName]);
+
+  // ---------------------------------------------------------------- compile
   const compile = useCallback(async () => {
     const seq = ++compileSeq.current;
     setRunning(false);
@@ -193,7 +266,9 @@ export const App: React.FC = () => {
 
     if (!result.runtime) {
       setBackendMode('none');
-      setCompileInfo(`Verilator failed (${result.timings.verilatorMs.toFixed(0)} ms)`);
+      setCompileInfo(
+        `Verilator failed (${result.timings.verilatorMs.toFixed(0)} ms)`
+      );
       return;
     }
 
@@ -291,6 +366,10 @@ export const App: React.FC = () => {
   // Continuous clock: run ceil(Hz * frame) cycles per UI frame
   useEffect(() => {
     if (!running) return;
+    if (!clkName) {
+      setRunning(false);
+      return;
+    }
     let carry = 0;
     let last = performance.now();
     const timer = window.setInterval(() => {
@@ -320,7 +399,7 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, clockHz, clkName, sampleMatrix]);
 
-  // ------------------------------------------------------------- inputs (fixes BUG-007)
+  // ------------------------------------------------------------- inputs
   const applyInput = (signalName: string, update: (cur: bigint) => bigint) => {
     const rt = runtimeRef.current;
     if (!rt) return;
@@ -332,7 +411,7 @@ export const App: React.FC = () => {
     publishMatrix();
     setSignals(sig);
 
-    // Record waveform sample when combinational inputs change while clock is paused or absent (fixes BUG-007)
+    // Record waveform sample when combinational inputs change while clock is paused or absent
     if (!running || !clkName) {
       pushHistory([
         { cycle: cycleRef.current, halfCycle: clockLevelRef.current, values: sig },
@@ -372,7 +451,79 @@ export const App: React.FC = () => {
     publishMatrix();
   };
 
-  // ------------------------------------------------------------- uploads
+  // ------------------------------------------------------------- I/O config handlers
+  const activePresetDefaults = useMemo(() => {
+    const preset = SAMPLE_PRESETS.find((p) => p.id === selectedPresetId);
+    if (!preset) return undefined;
+    const presetTop = parseVerilogSource([preset.verilogCode]).topModule;
+    return presetTop === topModule ? preset.defaultIoConfig : undefined;
+  }, [selectedPresetId, topModule]);
+
+  const handleAssignPort = (
+    port: PortDefinition,
+    componentId: BoardComponentId | null
+  ) => {
+    setIoAssignments((prev) => {
+      const next = { ...prev };
+      if (!componentId) {
+        delete next[port.name];
+      } else {
+        next[port.name] = {
+          componentId,
+          configuredDirection: port.direction,
+          configuredWidth: port.width,
+        };
+      }
+      return next;
+    });
+  };
+
+  const handleAutoAssign = () => {
+    setIoAssignments((prev) => {
+      // Preserve currently valid assignments and auto-assign unassigned ports
+      const kept: Record<string, PortIoAssignment> = {};
+      const usedComponents = new Set<BoardComponentId>();
+      for (const res of ioValidation.results) {
+        if (res.status === 'configured' && res.componentId && prev[res.port.name]) {
+          kept[res.port.name] = prev[res.port.name];
+          usedComponents.add(res.componentId);
+        }
+      }
+      const suggested = autoAssignPorts(ports, activePresetDefaults);
+      for (const [portName, assignment] of Object.entries(suggested)) {
+        if (kept[portName] || usedComponents.has(assignment.componentId)) continue;
+        kept[portName] = assignment;
+        usedComponents.add(assignment.componentId);
+      }
+      return kept;
+    });
+  };
+
+  const handleResetIoDefaults = () => {
+    clearSavedIoConfig(topModule);
+    setIoAssignments(autoAssignPorts(ports, activePresetDefaults));
+  };
+
+  const handleClearAllIo = () => {
+    setIoAssignments({});
+  };
+
+  // ------------------------------------------------------------- uploads & presets
+  const handleSelectPreset = (presetId: string) => {
+    const preset = SAMPLE_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    const parsed = parseVerilogSource([preset.verilogCode]);
+    setSelectedPresetId(preset.id);
+    debounceCompileRef.current = false;
+    skipNextReconcileRef.current = true;
+    setRuntimePorts(null);
+    setEditIndex(0);
+    setVerilogFiles([
+      { name: preset.verilogFilename, content: preset.verilogCode },
+    ]);
+    setIoAssignments(autoAssignPorts(parsed.ports, preset.defaultIoConfig));
+  };
+
   const handleUploadVerilogFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const loaded: SourceFile[] = [];
@@ -380,18 +531,18 @@ export const App: React.FC = () => {
       loaded.push({ name: file.name, content: await file.text() });
     }
     debounceCompileRef.current = false;
+    setSelectedPresetId('');
     setRuntimePorts(null);
     setEditIndex(0);
     setVerilogFiles(loaded);
   };
 
-  const handleUploadQsfFile = async (file: File | undefined) => {
-    if (!file) return;
-    setQsfFile({ name: file.name, content: await file.text() });
-  };
-
   const errorCount = messages.filter((m) => m.severity === 'error').length;
   const warnCount = messages.length - errorCount;
+  const ioErrorCount = ioValidation.conflictCount + ioValidation.invalidCount;
+  const ioIssuesToBanner = ioValidation.results.flatMap((r) =>
+    r.issues.filter((i) => i.severity === 'error')
+  );
   const signalDefs = [...ports, ...runtimeInternals];
 
   return (
@@ -423,24 +574,15 @@ export const App: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Preset Selector */}
             <select
-              onChange={(e) => {
-                const preset = SAMPLE_PRESETS.find((p) => p.id === e.target.value);
-                if (preset) {
-                  debounceCompileRef.current = false;
-                  setRuntimePorts(null);
-                  setEditIndex(0);
-                  setVerilogFiles([
-                    { name: preset.verilogFilename, content: preset.verilogCode },
-                  ]);
-                  setQsfFile({
-                    name: preset.qsfFilename,
-                    content: preset.qsfContent,
-                  });
-                }
-              }}
+              value={selectedPresetId}
+              onChange={(e) => handleSelectPreset(e.target.value)}
               className="bg-slate-950 border border-indigo-500/35 hover:border-indigo-400/60 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-400 transition"
-              defaultValue={SAMPLE_PRESETS[0].id}
             >
+              {selectedPresetId === '' && (
+                <option value="" disabled>
+                  {t.presetCustomUploaded}
+                </option>
+              )}
               {SAMPLE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
                   {t.presetLabel} {p.name}
@@ -460,20 +602,6 @@ export const App: React.FC = () => {
                 multiple
                 className="hidden"
                 onChange={(e) => handleUploadVerilogFiles(e.target.files)}
-              />
-            </label>
-
-            {/* Upload .qsf */}
-            <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/40 cursor-pointer transition">
-              <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
-              <span>
-                {t.uploadQsf} ({qsfFile.name})
-              </span>
-              <input
-                type="file"
-                accept=".qsf"
-                className="hidden"
-                onChange={(e) => handleUploadQsfFile(e.target.files?.[0])}
               />
             </label>
 
@@ -509,16 +637,17 @@ export const App: React.FC = () => {
           onChangeClockHz={setClockHz}
         />
 
-        {/* Compiler & Pin Conflict Banner */}
+        {/* Compiler & I/O Validation Banner */}
         {(compiling ||
           messages.length > 0 ||
           compileInfo ||
-          qsfParsed.conflicts.length > 0) && (
+          ioErrorCount > 0 ||
+          ioValidation.warningCount > 0) && (
           <div
             className={`rounded-xl border p-3 text-xs font-mono space-y-1 max-h-48 overflow-y-auto shadow-md ${
-              errorCount
+              errorCount || ioErrorCount > 0
                 ? 'border-rose-500/50 bg-rose-950/35'
-                : warnCount || qsfParsed.conflicts.length > 0
+                : warnCount || ioValidation.warningCount > 0
                 ? 'border-amber-500/50 bg-amber-950/25'
                 : 'border-emerald-500/40 bg-emerald-950/25'
             }`}
@@ -526,9 +655,9 @@ export const App: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2 text-slate-200">
               {compiling ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-300" />
-              ) : errorCount ? (
+              ) : errorCount || ioErrorCount > 0 ? (
                 <XCircle className="w-3.5 h-3.5 text-rose-400" />
-              ) : warnCount || qsfParsed.conflicts.length > 0 ? (
+              ) : warnCount || ioValidation.warningCount > 0 ? (
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
               ) : (
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -539,8 +668,16 @@ export const App: React.FC = () => {
                     ? t.compilingCached
                     : t.compilingFirstRun
                   : `${errorCount} ${t.errorsCount}, ${warnCount} ${t.warningsCount}${
-                      qsfParsed.conflicts.length > 0
-                        ? `, ${qsfParsed.conflicts.length} ${t.pinConflictsCount}`
+                      ioValidation.conflictCount > 0
+                        ? `, ${ioValidation.conflictCount} ${t.ioConflictsCount}`
+                        : ''
+                    }${
+                      ioValidation.invalidCount > 0
+                        ? `, ${ioValidation.invalidCount} ${t.ioInvalidCount}`
+                        : ''
+                    }${
+                      ioValidation.warningCount > 0
+                        ? `, ${ioValidation.warningCount} ${t.ioWarningsCount}`
                         : ''
                     }`}
               </span>
@@ -550,7 +687,7 @@ export const App: React.FC = () => {
             </div>
             {messages.map((m, i) => (
               <div
-                key={i}
+                key={`msg-${i}`}
                 className={
                   m.severity === 'error' ? 'text-rose-300' : 'text-amber-300'
                 }
@@ -564,10 +701,10 @@ export const App: React.FC = () => {
                 {m.msg}
               </div>
             ))}
-            {qsfParsed.conflicts.map((c) => (
-              <div key={c.pinLocation} className="text-amber-300">
+            {ioIssuesToBanner.map((issue, idx) => (
+              <div key={`io-${issue.portName}-${idx}`} className="text-rose-300">
                 <AlertTriangle className="inline w-3 h-3 mr-1" />
-                {t.pinConflictBanner} {c.pinLocation} → {c.signals.join(', ')}
+                [{issue.portName}] {formatValidationIssue(issue, lang, t)}
               </div>
             ))}
           </div>
@@ -584,14 +721,14 @@ export const App: React.FC = () => {
                   t.tabBoard,
                 ],
                 [
+                  'io',
+                  <SlidersHorizontal key="i" className="w-3.5 h-3.5" />,
+                  `${t.tabIoConfig} (${ioValidation.configuredCount}/${ports.length})`,
+                ],
+                [
                   'code',
                   <Code2 key="i" className="w-3.5 h-3.5" />,
                   t.tabCode,
-                ],
-                [
-                  'qsf',
-                  <Pin key="i" className="w-3.5 h-3.5" />,
-                  `${t.tabQsf} (${qsfParsed.assignments.length} ${t.pinsUnit})`,
                 ],
               ] as const
             ).map(([id, icon, label]) => (
@@ -606,15 +743,27 @@ export const App: React.FC = () => {
               >
                 {icon}
                 {label}
+                {id === 'io' && ioErrorCount > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-rose-500/25 text-rose-200 border border-rose-500/45">
+                    {ioErrorCount}
+                  </span>
+                )}
+                {id === 'io' &&
+                  ioErrorCount === 0 &&
+                  ioValidation.warningCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500/25 text-amber-200 border border-amber-500/45">
+                      {ioValidation.warningCount}
+                    </span>
+                  )}
               </button>
             ))}
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-xl">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             <span>
-              {ports.length} {t.portsUnit} • {runtimeInternals.length}{' '}
-              {t.internalSignalsUnit} • {qsfParsed.assignments.length}{' '}
-              {t.qsfPinsUnit}
+              {ports.length} {t.portsUnit} • {ioValidation.configuredCount}{' '}
+              {t.configuredUnit} • {runtimeInternals.length}{' '}
+              {t.internalSignalsUnit}
             </span>
           </div>
         </div>
@@ -624,8 +773,6 @@ export const App: React.FC = () => {
             <div className="xl:col-span-8">
               <BoardView
                 topModule={topModule}
-                deviceFamily={qsfParsed.family}
-                partNumber={qsfParsed.device}
                 groups={controlGroups}
                 signals={signals}
                 t={t}
@@ -636,10 +783,10 @@ export const App: React.FC = () => {
             <div className="xl:col-span-4">
               <MatrixViewer
                 matrixBuffer={matrixBuffer}
-                rowSignalName={matrixRowGroup?.baseName ?? null}
-                colSignalName={matrixColGroup?.baseName ?? null}
-                rowValue={signals[rowSigName] ?? 0n}
-                colValue={signals[colSigName] ?? 0n}
+                rowSignalName={rowSigName}
+                colSignalName={colSigName}
+                rowValue={rowSigName ? signals[rowSigName] ?? 0n : 0n}
+                colValue={colSigName ? signals[colSigName] ?? 0n : 0n}
                 povEnabled={povEnabled}
                 invertColPolarity={invertColPolarity}
                 isConnected={hasMatrixPorts}
@@ -660,6 +807,19 @@ export const App: React.FC = () => {
               />
             </div>
           </div>
+        )}
+
+        {activeTab === 'io' && (
+          <IoConfigPanel
+            topModule={topModule}
+            validation={ioValidation}
+            lang={lang}
+            t={t}
+            onAssignPort={handleAssignPort}
+            onAutoAssign={handleAutoAssign}
+            onResetDefaults={handleResetIoDefaults}
+            onClearAll={handleClearAllIo}
+          />
         )}
 
         {activeTab === 'code' && (
@@ -706,7 +866,9 @@ export const App: React.FC = () => {
                 const text = e.target.value;
                 debounceCompileRef.current = true;
                 setVerilogFiles((files) =>
-                  files.map((f, i) => (i === editIndex ? { ...f, content: text } : f))
+                  files.map((f, i) =>
+                    i === editIndex ? { ...f, content: text } : f
+                  )
                 );
               }}
               spellCheck={false}
@@ -715,77 +877,11 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'qsf' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div className="bg-slate-900/95 border border-cyan-500/25 rounded-2xl p-4 space-y-3 shadow-xl">
-              <div className="text-xs font-mono font-semibold text-cyan-300">
-                {t.qsfSourceTitle} ({qsfFile.name})
-              </div>
-              <textarea
-                value={qsfFile.content}
-                onChange={(e) =>
-                  setQsfFile({ name: qsfFile.name, content: e.target.value })
-                }
-                spellCheck={false}
-                className="w-full h-[380px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <div className="bg-slate-900/95 border border-cyan-500/25 rounded-2xl p-4 overflow-y-auto max-h-[440px] shadow-xl">
-              <div className="text-xs font-mono text-slate-200 mb-3 font-semibold">
-                {t.parsedPinsTitle} ({qsfParsed.assignments.length})
-              </div>
-              <table className="w-full text-left font-mono text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400">
-                    <th className="py-1.5">{t.colSignal}</th>
-                    <th className="py-1.5">{t.colPin}</th>
-                    <th className="py-1.5">{t.colCategory}</th>
-                    <th className="py-1.5">{t.colStatus}</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {qsfParsed.assignments.map((a) => {
-                    const matched = ports.some((p) => p.name === a.baseName);
-                    return (
-                      <tr key={a.signalName}>
-                        <td className="py-1.5 text-slate-200">{a.signalName}</td>
-                        <td
-                          className={`py-1.5 font-semibold ${
-                            a.hasConflict ? 'text-rose-400' : 'text-emerald-400'
-                          }`}
-                        >
-                          {a.pinLocation}
-                        </td>
-                        <td className="py-1.5 text-cyan-300">{a.category}</td>
-                        <td className="py-1.5">
-                          {a.hasConflict ? (
-                            <span className="px-1.5 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[10px]">
-                              ⚠ {t.statusConflict}
-                            </span>
-                          ) : matched ? (
-                            <span className="text-emerald-400">
-                              ✓ {t.statusMatched}
-                            </span>
-                          ) : (
-                            <span className="text-slate-500">
-                              {t.statusUnused}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
         <SignalMonitor
           signalDefs={signalDefs}
           signals={signals}
           history={history}
-          pinAssignments={qsfParsed.assignments}
+          ioValidation={ioValidation}
           t={t}
         />
       </main>

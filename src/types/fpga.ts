@@ -1,23 +1,39 @@
+export type BoardComponentId =
+  | 'CLOCK'
+  | 'KEY'
+  | 'SW'
+  | 'LEDR'
+  | 'LEDG'
+  | 'HEX0'
+  | 'HEX1'
+  | 'HEX2'
+  | 'HEX3'
+  | 'HEX4'
+  | 'HEX5'
+  | 'MATRIX_ROW'
+  | 'MATRIX_COL';
+
 export type ComponentCategory =
   | 'CLOCK'
   | 'KEY'
   | 'SW'
-  | 'LED'
+  | 'LEDR'
+  | 'LEDG'
   | 'HEX'
   | 'MATRIX_ROW'
-  | 'MATRIX_COL'
-  | 'MATRIX_PIXEL'
-  | 'GPIO';
+  | 'MATRIX_COL';
 
-export interface PinAssignment {
-  signalName: string;       // Raw signal identifier in QSF, e.g. "SW[0]" or "HEX0[6]"
-  baseName: string;         // Base vector name, e.g. "SW", "HEX0", "KEY"
-  bitIndex: number | null;  // Bit index if bus, e.g. 0..15, or null for scalar
-  pinLocation: string;      // Physical FPGA pin, e.g. "PIN_AB12"
-  ioStandard?: string;      // e.g. "3.3-V LVTTL"
+export interface BoardComponentSpec {
+  id: BoardComponentId;
   category: ComponentCategory;
-  direction: 'input' | 'output' | 'inout';
-  hasConflict?: boolean;    // True when multiple signals share the same physical pin
+  direction: 'input' | 'output';
+  nominalWidth: number;
+  minWidth: number;
+  maxWidth: number;
+  /** Exact width required (e.g. CLOCK must be 1-bit) */
+  strictExactWidth?: boolean;
+  /** Minimum width strictly required (e.g. HEX requires >= 7 bits) */
+  strictMinWidth?: boolean;
 }
 
 export interface PortDefinition {
@@ -29,23 +45,72 @@ export interface PortDefinition {
   isReg?: boolean;
 }
 
-export interface ParsedDesign {
-  topModule: string;
-  ports: PortDefinition[];
-  internalSignals: PortDefinition[];
-  pinAssignments: PinAssignment[];
-  deviceFamily?: string;
-  partNumber?: string;
+export type IoAssignmentStatus = 'configured' | 'unassigned' | 'conflict' | 'invalid';
+
+export type ValidationIssueCode =
+  | 'DIRECTION_MISMATCH'
+  | 'DIRECTION_CHANGED'
+  | 'CLOCK_WIDTH_INVALID'
+  | 'HEX_WIDTH_TOO_SMALL'
+  | 'WIDTH_EXCEEDS_64'
+  | 'DUPLICATE_COMPONENT'
+  | 'WIDTH_EXCEEDS_COMPONENT'
+  | 'HEX_DP_UNUSED'
+  | 'MATRIX_WIDTH_MISMATCH';
+
+export interface ValidationIssue {
+  code: ValidationIssueCode;
+  severity: 'error' | 'warning';
+  portName: string;
+  componentId: BoardComponentId;
+  portWidth: number;
+  componentWidth: number;
+  portDirection: 'input' | 'output' | 'inout';
+  componentDirection: 'input' | 'output';
+  prevDirection?: 'input' | 'output' | 'inout';
+  prevWidth?: number;
+  conflictingPorts?: string[];
+}
+
+export interface PortIoAssignment {
+  componentId: BoardComponentId;
+  configuredDirection: 'input' | 'output' | 'inout';
+  configuredWidth: number;
+}
+
+export interface PortValidationResult {
+  port: PortDefinition;
+  componentId: BoardComponentId | null;
+  status: IoAssignmentStatus;
+  issues: ValidationIssue[];
+  signatureChanged?: boolean;
+}
+
+export interface IoResourceWarning {
+  code: 'MATRIX_MISSING_COL' | 'MATRIX_MISSING_ROW';
+}
+
+export interface IoValidationSummary {
+  results: PortValidationResult[];
+  byPort: Record<string, PortValidationResult>;
+  configuredCount: number;
+  unassignedCount: number;
+  conflictCount: number;
+  invalidCount: number;
+  warningCount: number;
+  resourceWarnings: IoResourceWarning[];
 }
 
 export interface BoardControlGroup {
+  componentId: BoardComponentId;
   category: ComponentCategory;
-  baseName: string;
-  width: number;
+  baseName: string; // Mapped Verilog port name
+  width: number; // Verilog port width
+  maxWidth: number; // Physical board component width capacity
   msb: number;
   lsb: number;
   direction: 'input' | 'output' | 'inout';
-  pins: Record<number, string>; // bitIndex -> PIN_XXXX
+  hasWidthWarning: boolean;
 }
 
 export interface SignalHistoryEntry {

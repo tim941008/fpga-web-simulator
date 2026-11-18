@@ -1,9 +1,0 @@
-set_global_assignment -name FAMILY "Cyclone V"
-set_global_assignment -name DEVICE 5CSEMA5F31C6
-set_global_assignment -name TOP_LEVEL_ENTITY and_gate
-
-set_location_assignment PIN_AB12 -to SW[0]
-set_location_assignment PIN_AC12 -to SW[1]
-set_location_assignment PIN_V16  -to LEDR[0]
-set_location_assignment PIN_AE26 -to UNUSED_HEX0[0]
-set_location_assignment PIN_AA14 -to ORPHAN_KEY[0]

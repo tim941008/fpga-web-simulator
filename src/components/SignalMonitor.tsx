@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { PinAssignment, PortDefinition, SignalHistoryEntry } from '../types/fpga';
+import {
+  IoValidationSummary,
+  PortDefinition,
+  SignalHistoryEntry,
+} from '../types/fpga';
 import { Activity, Binary } from 'lucide-react';
-import { TranslationDict } from '../i18n/translations';
+import { getComponentLabel, TranslationDict } from '../i18n/translations';
 
 interface SignalMonitorProps {
   signalDefs: PortDefinition[];
   signals: Record<string, bigint>;
   history: SignalHistoryEntry[];
-  pinAssignments: PinAssignment[];
+  ioValidation: IoValidationSummary;
   t: TranslationDict;
 }
 
@@ -17,12 +21,12 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
   signalDefs,
   signals,
   history,
-  pinAssignments,
+  ioValidation,
   t,
 }) => {
   const [radix, setRadix] = useState<RadixMode>('hex');
 
-  // Fixes BUG-006: Pad binary representation to full declared bit width
+  // Pad binary representation to full declared bit width
   const formatValue = (val: bigint, width: number): string => {
     const mask = (1n << BigInt(width)) - 1n;
     const masked = val & mask;
@@ -36,11 +40,26 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
     return masked.toString(10);
   };
 
-  const getPinSummaryForSignal = (baseName: string): string => {
-    const matches = pinAssignments.filter((p) => p.baseName === baseName);
-    if (matches.length === 0) return t.internalVirtual;
-    if (matches.length === 1) return matches[0].pinLocation;
-    return `${matches[0].pinLocation} .. ${matches[matches.length - 1].pinLocation} (${matches.length} ${t.pinsUnit})`;
+  const renderAssignedComponent = (signalName: string) => {
+    const res = ioValidation.byPort[signalName];
+    if (!res) {
+      return <span className="text-slate-500">{t.internalVirtual}</span>;
+    }
+    if (!res.componentId) {
+      return <span className="text-slate-500">{t.ioStatusUnassigned}</span>;
+    }
+
+    const label = getComponentLabel(res.componentId, t);
+    if (res.status === 'invalid') {
+      return <span className="text-rose-400">✕ {label}</span>;
+    }
+    if (res.status === 'conflict') {
+      return <span className="text-orange-400">⚠ {label}</span>;
+    }
+    if (res.issues.some((i) => i.severity === 'warning')) {
+      return <span className="text-amber-300">⚠ {label}</span>;
+    }
+    return <span className="text-emerald-300">{label}</span>;
   };
 
   const recentHistory = history.slice(-24);
@@ -82,7 +101,7 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
               <th className="py-2 px-3">{t.colSignal}</th>
               <th className="py-2 px-2">{t.colDirection}</th>
               <th className="py-2 px-2">{t.colWidth}</th>
-              <th className="py-2 px-3">{t.colQsfPin}</th>
+              <th className="py-2 px-3">{t.colAssignedComponent}</th>
               <th className="py-2 px-3">{t.colCurrentVal}</th>
               <th className="py-2 px-3 min-w-[260px]">{t.colWaveform}</th>
             </tr>
@@ -112,8 +131,8 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
                     </span>
                   </td>
                   <td className="py-2.5 px-2 text-slate-400">{def.width}-bit</td>
-                  <td className="py-2.5 px-3 text-slate-400 text-[11px]">
-                    {getPinSummaryForSignal(def.name)}
+                  <td className="py-2.5 px-3 text-[11px]">
+                    {renderAssignedComponent(def.name)}
                   </td>
                   <td className="py-2.5 px-3 text-cyan-300 font-semibold">
                     {formatValue(val, def.width)}

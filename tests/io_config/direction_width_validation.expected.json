@@ -1,0 +1,14 @@
+{
+  "testId": "IOCFG-002",
+  "name": "Direction & Port Width Compatibility Validation",
+  "category": "io_config",
+  "topModule": "direction_width_validation",
+  "expectedChecks": {
+    "wide_clk_to_CLOCK": "invalid (CLOCK_WIDTH_INVALID)",
+    "short_seg_to_HEX0": "invalid (HEX_WIDTH_TOO_SMALL)",
+    "wide_sw_to_LEDR": "invalid (DIRECTION_MISMATCH)",
+    "wide_sw_to_SW": "configured with warning (WIDTH_EXCEEDS_COMPONENT)",
+    "seg_with_dp_to_HEX1": "configured with warning (HEX_DP_UNUSED)",
+    "narrow_matrix_row_to_MATRIX_ROW": "configured with warning (MATRIX_WIDTH_MISMATCH + MATRIX_MISSING_COL)"
+  }
+}

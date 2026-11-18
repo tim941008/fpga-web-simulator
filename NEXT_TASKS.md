@@ -2,15 +2,16 @@
 
 ## Current Status (2026-11-18)
 - **Completed & Verified:**
-  - All P0 bugs (`BUG-001`, `BUG-002`, `BUG-003`) and P1/P2 bugs (`BUG-004` through `BUG-010`) have been fixed and verified.
-  - Modernized engineering UI styling applied across all components.
-  - Full English (`en`) / Traditional Chinese (`zh-TW`) language switching with `localStorage` persistence implemented and verified.
+  - Completely removed Quartus `.qsf` support and replaced it with the **GUI-Based I/O Pin Configuration** system (`src/config/ioConfig.ts`, `src/components/IoConfigPanel.tsx`).
+  - Added full validation (`Configured`, `Unassigned`, `Conflict`, `Invalid Assignment`), direction/width checks, custom port name mapping (including distinct Red `LEDR` & Green `LEDG` banks), and `localStorage` persistence with automatic edit reconciliation.
+  - All prior P0/P1/P2 bugs (`BUG-001` through `BUG-010`) resolved; modernized UI and EN/`zh-TW` localization verified.
+  - Automated TypeScript (`npm test`) and Python (`tests/deployment/run_verification.py`) I/O configuration test suites added.
 
 ---
 
 ## Remaining Enhancement Backlog (Future Features)
 
-### P2 — Future Feature Enhancements (Out of Scope for Current Bug-Fix Cycle)
+### P2 — Future Feature Enhancements
 1. **Wide Vector (>64-Bit) Support in `FpgaRuntime` (`LIM-002`, `LIM-003`)**
    - Extend `FpgaRuntime` and `HDLModuleJS` fallback to expose packed ports wider than 64 bits via multi-word `Uint32Array` reads/writes.
 2. **Memory Array Inspector Tab (`LIM-004`)**
@@ -19,3 +20,5 @@
    - Add an optional `KEY Polarity: Active-LOW (1=Idle, 0=Pressed)` toggle in `BoardView.tsx` for active-low reset designs.
 4. **Canvas Logic Analyzer & `.vcd` Export**
    - Upgrade `SignalMonitor.tsx` with pan/zoom timeline cursors and Value Change Dump (`.vcd`) download.
+5. **Multiple Clock Domain Support & Bit-Slice I/O Mapping**
+   - Allow independent stepping of multiple assigned clock inputs and optional sub-bit slice binding (e.g., assigning a 1-bit reset port and 1-bit enable port to `KEY[0]` and `KEY[1]` individually).

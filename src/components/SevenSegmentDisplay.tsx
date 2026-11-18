@@ -1,10 +1,10 @@
 import React from 'react';
 
 interface SevenSegmentDisplayProps {
-  label: string;
+  slotLabel: string;
+  portName: string;
   value: bigint;
   activeLow: boolean;
-  pins: Record<number, string>;
 }
 
 /**
@@ -16,13 +16,12 @@ interface SevenSegmentDisplayProps {
  * Bit 4 = Segment E (Bottom Left)
  * Bit 5 = Segment F (Top Left)
  * Bit 6 = Segment G (Middle)
- * Bit 7 = DP (Decimal Point, optional)
  */
 export const SevenSegmentDisplay: React.FC<SevenSegmentDisplayProps> = ({
-  label,
+  slotLabel,
+  portName,
   value,
   activeLow,
-  pins,
 }) => {
   const isSegmentOn = (bit: number): boolean => {
     const rawBit = Number((value >> BigInt(bit)) & 1n);
@@ -32,17 +31,13 @@ export const SevenSegmentDisplay: React.FC<SevenSegmentDisplayProps> = ({
   const onColor = '#ef4444'; // Bright red LED segment
   const offColor = '#1e293b'; // Dim slate segment
 
-  const pinSummary = Object.entries(pins)
-    .map(([b, p]) => `${label}[${b}]: ${p}`)
-    .join('\n');
-
   return (
     <div
-      title={pinSummary || `${label} (7-Segment)`}
-      className="flex flex-col items-center bg-slate-950 border border-slate-800 rounded-lg p-2.5 shadow-inner"
+      title={`${slotLabel} ← ${portName}[6:0]`}
+      className="flex flex-col items-center bg-slate-950 border border-slate-800 rounded-lg p-2.5 shadow-inner min-w-[78px]"
     >
       <div className="text-[10px] font-mono text-slate-400 mb-1 flex items-center gap-1">
-        <span className="font-semibold text-slate-200">{label}</span>
+        <span className="font-semibold text-slate-200">{slotLabel}</span>
         <span className="text-slate-600">
           (0x{Number(value & 0x7fn).toString(16).toUpperCase().padStart(2, '0')})
         </span>
@@ -98,9 +93,9 @@ export const SevenSegmentDisplay: React.FC<SevenSegmentDisplayProps> = ({
         />
       </svg>
 
-      {Object.keys(pins).length > 0 && (
-        <div className="mt-1 text-[9px] font-mono text-slate-500 truncate max-w-[68px]">
-          {pins[0] ?? ''}..
+      {portName !== slotLabel && (
+        <div className="mt-1 text-[9px] font-mono text-cyan-400/80 truncate max-w-[74px]">
+          {portName}
         </div>
       )}
     </div>

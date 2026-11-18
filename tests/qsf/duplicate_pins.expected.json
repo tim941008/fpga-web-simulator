@@ -1,9 +1,0 @@
-{
-  "testId": "QSF-002",
-  "name": "Duplicate Pin Location & Duplicate Signal Overwrite",
-  "expectedPinCount": 3,
-  "duplicatePhysicalPin": "PIN_A8",
-  "signalsSharingPinA8": ["KEY[3]", "LEDR[0]"],
-  "overwrittenSignal": { "signalName": "SW[0]", "finalPin": "PIN_C11" },
-  "expectedConflictWarning": true
-}

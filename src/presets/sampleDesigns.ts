@@ -1,17 +1,19 @@
+import { BoardComponentId } from '../types/fpga';
+
 export interface SamplePreset {
   id: string;
   name: string;
   description: string;
   verilogFilename: string;
   verilogCode: string;
-  qsfFilename: string;
-  qsfContent: string;
+  /** Optional explicit default I/O component mapping (also supports arbitrary custom port names) */
+  defaultIoConfig?: Partial<Record<string, BoardComponentId>>;
 }
 
 export const SAMPLE_PRESETS: SamplePreset[] = [
   {
     id: 'full-demo',
-    name: 'DE10-Lite Complete Suite (Counter + 7-Seg + 16x16 Matrix)',
+    name: 'Complete FPGA Suite (Counter + 7-Seg + 16x16 Matrix)',
     description:
       'Combines combinational switch logic, sequential counter on HEX0/HEX1, push-button reset/enable, and a 16x16 scanned LED Matrix display.',
     verilogFilename: 'top_fpga_demo.v',
@@ -127,101 +129,16 @@ module top_fpga_demo (
 
 endmodule
 `,
-    qsfFilename: 'top_fpga_demo.qsf',
-    qsfContent: `# -------------------------------------------------------------------------- #
-# Quartus Prime Settings File (.qsf) - DE10-Lite / MAX 10 Pin Assignments
-# -------------------------------------------------------------------------- #
-set_global_assignment -name FAMILY "MAX 10"
-set_global_assignment -name DEVICE 10M50DAF484C7G
-set_global_assignment -name TOP_LEVEL_ENTITY top_fpga_demo
-
-# Clock
-set_location_assignment PIN_P11 -to CLOCK_50
-set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to CLOCK_50
-
-# Push Buttons (KEY)
-set_location_assignment PIN_B8  -to KEY[0]
-set_location_assignment PIN_A7  -to KEY[1]
-set_location_assignment PIN_B9  -to KEY[2]
-set_location_assignment PIN_B15 -to KEY[3]
-
-# Slide Switches (SW)
-set_location_assignment PIN_C10 -to SW[0]
-set_location_assignment PIN_C11 -to SW[1]
-set_location_assignment PIN_D12 -to SW[2]
-set_location_assignment PIN_C12 -to SW[3]
-set_location_assignment PIN_A12 -to SW[4]
-set_location_assignment PIN_B12 -to SW[5]
-set_location_assignment PIN_A13 -to SW[6]
-set_location_assignment PIN_A14 -to SW[7]
-set_location_assignment PIN_B14 -to SW[8]
-set_location_assignment PIN_F15 -to SW[9]
-
-# Red LEDs (LEDR)
-set_location_assignment PIN_A8  -to LEDR[0]
-set_location_assignment PIN_A9  -to LEDR[1]
-set_location_assignment PIN_A10 -to LEDR[2]
-set_location_assignment PIN_B10 -to LEDR[3]
-set_location_assignment PIN_D13 -to LEDR[4]
-set_location_assignment PIN_C13 -to LEDR[5]
-set_location_assignment PIN_E14 -to LEDR[6]
-set_location_assignment PIN_D14 -to LEDR[7]
-set_location_assignment PIN_A11 -to LEDR[8]
-set_location_assignment PIN_B11 -to LEDR[9]
-
-# 7-Segment Display HEX0
-set_location_assignment PIN_C14 -to HEX0[0]
-set_location_assignment PIN_E15 -to HEX0[1]
-set_location_assignment PIN_C15 -to HEX0[2]
-set_location_assignment PIN_C16 -to HEX0[3]
-set_location_assignment PIN_E16 -to HEX0[4]
-set_location_assignment PIN_D17 -to HEX0[5]
-set_location_assignment PIN_C17 -to HEX0[6]
-
-# 7-Segment Display HEX1
-set_location_assignment PIN_C18 -to HEX1[0]
-set_location_assignment PIN_D18 -to HEX1[1]
-set_location_assignment PIN_E18 -to HEX1[2]
-set_location_assignment PIN_B16 -to HEX1[3]
-set_location_assignment PIN_A17 -to HEX1[4]
-set_location_assignment PIN_A18 -to HEX1[5]
-set_location_assignment PIN_B17 -to HEX1[6]
-
-# 16x16 LED Matrix GPIO Expansion Header
-set_location_assignment PIN_V10 -to MATRIX_ROW[0]
-set_location_assignment PIN_W10 -to MATRIX_ROW[1]
-set_location_assignment PIN_V9  -to MATRIX_ROW[2]
-set_location_assignment PIN_W9  -to MATRIX_ROW[3]
-set_location_assignment PIN_V8  -to MATRIX_ROW[4]
-set_location_assignment PIN_W8  -to MATRIX_ROW[5]
-set_location_assignment PIN_V7  -to MATRIX_ROW[6]
-set_location_assignment PIN_W7  -to MATRIX_ROW[7]
-set_location_assignment PIN_W6  -to MATRIX_ROW[8]
-set_location_assignment PIN_V5  -to MATRIX_ROW[9]
-set_location_assignment PIN_W5  -to MATRIX_ROW[10]
-set_location_assignment PIN_AA15 -to MATRIX_ROW[11]
-set_location_assignment PIN_AA14 -to MATRIX_ROW[12]
-set_location_assignment PIN_W13 -to MATRIX_ROW[13]
-set_location_assignment PIN_W12 -to MATRIX_ROW[14]
-set_location_assignment PIN_AB13 -to MATRIX_ROW[15]
-
-set_location_assignment PIN_AB12 -to MATRIX_COL[0]
-set_location_assignment PIN_Y11  -to MATRIX_COL[1]
-set_location_assignment PIN_AB11 -to MATRIX_COL[2]
-set_location_assignment PIN_W11  -to MATRIX_COL[3]
-set_location_assignment PIN_AB10 -to MATRIX_COL[4]
-set_location_assignment PIN_AA10 -to MATRIX_COL[5]
-set_location_assignment PIN_AA9  -to MATRIX_COL[6]
-set_location_assignment PIN_Y8   -to MATRIX_COL[7]
-set_location_assignment PIN_AA8  -to MATRIX_COL[8]
-set_location_assignment PIN_Y7   -to MATRIX_COL[9]
-set_location_assignment PIN_AA7  -to MATRIX_COL[10]
-set_location_assignment PIN_Y6   -to MATRIX_COL[11]
-set_location_assignment PIN_AA6  -to MATRIX_COL[12]
-set_location_assignment PIN_Y5   -to MATRIX_COL[13]
-set_location_assignment PIN_AA5  -to MATRIX_COL[14]
-set_location_assignment PIN_Y4   -to MATRIX_COL[15]
-`,
+    defaultIoConfig: {
+      CLOCK_50: 'CLOCK',
+      KEY: 'KEY',
+      SW: 'SW',
+      LEDR: 'LEDR',
+      HEX0: 'HEX0',
+      HEX1: 'HEX1',
+      MATRIX_ROW: 'MATRIX_ROW',
+      MATRIX_COL: 'MATRIX_COL',
+    },
   },
   {
     id: 'comb-alu',
@@ -272,35 +189,72 @@ set_location_assignment PIN_Y4   -to MATRIX_COL[15]
     end
 endmodule
 `,
-    qsfFilename: 'comb_alu.qsf',
-    qsfContent: `set_global_assignment -name FAMILY "Cyclone V"
-set_global_assignment -name DEVICE 5CSEMA5F31C6
-set_global_assignment -name TOP_LEVEL_ENTITY comb_alu
-set_location_assignment PIN_AA14 -to KEY[0]
-set_location_assignment PIN_AA15 -to KEY[1]
-set_location_assignment PIN_AB12 -to SW[0]
-set_location_assignment PIN_AC12 -to SW[1]
-set_location_assignment PIN_AF9  -to SW[2]
-set_location_assignment PIN_AF10 -to SW[3]
-set_location_assignment PIN_AD11 -to SW[4]
-set_location_assignment PIN_AD12 -to SW[5]
-set_location_assignment PIN_AE11 -to SW[6]
-set_location_assignment PIN_AC9  -to SW[7]
-set_location_assignment PIN_V16  -to LEDR[0]
-set_location_assignment PIN_W16  -to LEDR[1]
-set_location_assignment PIN_V17  -to LEDR[2]
-set_location_assignment PIN_V18  -to LEDR[3]
-set_location_assignment PIN_W17  -to LEDR[4]
-set_location_assignment PIN_W19  -to LEDR[5]
-set_location_assignment PIN_Y19  -to LEDR[6]
-set_location_assignment PIN_W20  -to LEDR[7]
-set_location_assignment PIN_AE26 -to HEX0[0]
-set_location_assignment PIN_AE27 -to HEX0[1]
-set_location_assignment PIN_AE28 -to HEX0[2]
-set_location_assignment PIN_AG27 -to HEX0[3]
-set_location_assignment PIN_AF28 -to HEX0[4]
-set_location_assignment PIN_AG28 -to HEX0[5]
-set_location_assignment PIN_AH28 -to HEX0[6]
+    defaultIoConfig: {
+      KEY: 'KEY',
+      SW: 'SW',
+      LEDR: 'LEDR',
+      HEX0: 'HEX0',
+    },
+  },
+  {
+    id: 'custom-io-demo',
+    name: 'Custom Port Names Demo (Red + Green LEDs + 7-Seg)',
+    description:
+      'Demonstrates arbitrary Verilog port names mapped via GUI I/O Pin Configuration to Clock, KEY, SW, LEDR, LEDG, and HEX0.',
+    verilogFilename: 'custom_port_counter.v',
+    verilogCode: `// ============================================================================
+// Custom Port Names Demo — Mapped via Visual I/O Pin Configuration
+// ============================================================================
+module custom_port_counter (
+    input  wire       sys_pulse,
+    input  wire [1:0] ctrl_btns,
+    input  wire [7:0] dip_inputs,
+    output wire [7:0] red_bar,
+    output wire [3:0] green_bar,
+    output reg  [6:0] digit_seg
+);
+    reg [7:0] count_q;
+
+    always @(posedge sys_pulse) begin
+        if (ctrl_btns[0]) begin
+            count_q <= 8'd0;
+        end else if (!ctrl_btns[1]) begin
+            count_q <= count_q + 8'd1;
+        end
+    end
+
+    assign red_bar   = count_q ^ dip_inputs;
+    assign green_bar = count_q[3:0];
+
+    always @(*) begin
+        case (count_q[3:0])
+            4'h0: digit_seg = 7'b1000000;
+            4'h1: digit_seg = 7'b1111001;
+            4'h2: digit_seg = 7'b0100100;
+            4'h3: digit_seg = 7'b0110000;
+            4'h4: digit_seg = 7'b0011001;
+            4'h5: digit_seg = 7'b0010010;
+            4'h6: digit_seg = 7'b0000010;
+            4'h7: digit_seg = 7'b1111000;
+            4'h8: digit_seg = 7'b0000000;
+            4'h9: digit_seg = 7'b0010000;
+            4'hA: digit_seg = 7'b0001000;
+            4'hB: digit_seg = 7'b0000011;
+            4'hC: digit_seg = 7'b1000110;
+            4'hD: digit_seg = 7'b0100001;
+            4'hE: digit_seg = 7'b0000110;
+            default: digit_seg = 7'b0001110;
+        endcase
+    end
+endmodule
 `,
+    defaultIoConfig: {
+      sys_pulse: 'CLOCK',
+      ctrl_btns: 'KEY',
+      dip_inputs: 'SW',
+      red_bar: 'LEDR',
+      green_bar: 'LEDG',
+      digit_seg: 'HEX0',
+    },
   },
 ];
