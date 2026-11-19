@@ -2,6 +2,8 @@ name: Deploy Web FPGA Simulator to GitHub Pages
 
 on:
   push:
+    branches: ['main', 'master', 'phase-b-stabilization']
+  pull_request:
     branches: ['main', 'master']
   workflow_dispatch:
 
@@ -11,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
+  group: 'pages-${{ github.ref }}'
   cancel-in-progress: true
 
 jobs:
@@ -26,21 +28,33 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies (npm ci)
+        run: |
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only
+          fi
+          npm ci
 
-      - name: Run I/O configuration unit tests
+      - name: Run unit tests (npm test)
         run: npm test
 
-      - name: Build static site
+      - name: Build static site (npm run build)
         run: npm run build
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-build-artifact
+          path: ./dist
+
       - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
   deploy:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

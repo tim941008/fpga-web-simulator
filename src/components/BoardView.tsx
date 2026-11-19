@@ -1,115 +1,71 @@
-import React, { useState } from 'react';
-import { BoardControlGroup } from '../types/fpga';
+import React from 'react';
+import {
+  ComponentValidationIssue,
+  HardwareComponentConfig,
+  KeyComponentConfig,
+  LedColorTheme,
+  LedComponentConfig,
+  SevenSegmentComponentConfig,
+  SwitchComponentConfig,
+} from '../types/hardwareConfig';
+import {
+  getOrderedBitIndices,
+  isRawBitActive,
+  logicalStateToRawBit,
+} from '../config/hardwareMapping';
 import { SevenSegmentDisplay } from './SevenSegmentDisplay';
-import { Cpu, Sliders, Radio, ToggleLeft } from 'lucide-react';
+import { Cpu, Sliders, Radio, ToggleLeft, AlertTriangle } from 'lucide-react';
 import { TranslationDict } from '../i18n/translations';
 
 interface BoardViewProps {
   topModule: string;
-  groups: BoardControlGroup[];
+  boardName: string;
+  components: HardwareComponentConfig[];
   signals: Record<string, bigint>;
+  validationIssues: ComponentValidationIssue[];
   t: TranslationDict;
   onToggleInputBit: (signalName: string, bitIndex: number) => void;
   onSetInputBit: (signalName: string, bitIndex: number, bitVal: 0 | 1) => void;
 }
 
+const LED_ON_STYLES: Record<LedColorTheme, string> = {
+  rose: 'bg-rose-500 border-rose-200 shadow-[0_0_12px_#f43f5e]',
+  emerald: 'bg-emerald-400 border-emerald-200 shadow-[0_0_12px_#34d399]',
+  amber: 'bg-amber-400 border-amber-200 shadow-[0_0_12px_#fbbf24]',
+  cyan: 'bg-cyan-400 border-cyan-200 shadow-[0_0_12px_#22d3ee]',
+  violet: 'bg-violet-400 border-violet-200 shadow-[0_0_12px_#a78bfa]',
+};
+
 export const BoardView: React.FC<BoardViewProps> = ({
   topModule,
-  groups,
+  boardName,
+  components,
   signals,
+  validationIssues,
   t,
   onToggleInputBit,
   onSetInputBit,
 }) => {
-  const [hexActiveLow, setHexActiveLow] = useState<boolean>(true);
-  const [keyMomentary, setKeyMomentary] = useState<boolean>(true);
+  const enabled = components.filter((c) => c.enabled);
+  const hexComps = enabled.filter(
+    (c): c is SevenSegmentComponentConfig => c.type === 'SEVEN_SEGMENT'
+  );
+  const ledComps = enabled.filter(
+    (c): c is LedComponentConfig => c.type === 'LED'
+  );
+  const switchComps = enabled.filter(
+    (c): c is SwitchComponentConfig => c.type === 'SWITCH'
+  );
+  const keyComps = enabled.filter(
+    (c): c is KeyComponentConfig => c.type === 'KEY'
+  );
 
-  const hexGroups = groups
-    .filter((g) => g.category === 'HEX')
-    .sort((a, b) => b.componentId.localeCompare(a.componentId));
-  const redLedGroups = groups.filter((g) => g.category === 'LEDR');
-  const greenLedGroups = groups.filter((g) => g.category === 'LEDG');
-  const swGroups = groups.filter((g) => g.category === 'SW');
-  const keyGroups = groups.filter((g) => g.category === 'KEY');
-
-  const getBit = (sigName: string, bitOffset: number): boolean => {
-    const val = signals[sigName] ?? 0n;
-    return ((val >> BigInt(bitOffset)) & 1n) === 1n;
-  };
-
-  const buildVisibleBits = (group: BoardControlGroup): Array<{ displayBit: number; runtimeBit: number }> => {
-    const count = Math.min(group.width, group.maxWidth);
-    const items: Array<{ displayBit: number; runtimeBit: number }> = [];
-    for (let offset = count - 1; offset >= 0; offset--) {
-      items.push({
-        displayBit: group.lsb + offset,
-        runtimeBit: offset,
-      });
-    }
-    return items;
-  };
-
-  const renderLedBank = (
-    group: BoardControlGroup,
-    color: 'red' | 'green'
-  ) => {
-    const isGreen = color === 'green';
-    const visibleBits = buildVisibleBits(group);
-    const isClamped = group.width > group.maxWidth;
-
-    return (
-      <div
-        key={`${group.componentId}-${group.baseName}`}
-        className="bg-slate-950/85 border border-slate-800 rounded-xl p-3.5 shadow-inner"
-      >
-        <div className="text-xs font-mono text-slate-300 mb-2.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className={isGreen ? 'font-semibold text-emerald-300' : 'font-semibold text-rose-300'}>
-              {group.componentId}
-            </span>
-            <span className="text-slate-500">←</span>
-            <span className="font-semibold text-slate-200">
-              {group.baseName}
-              {group.width > 1 ? `[${group.msb}:${group.lsb}]` : ''}
-            </span>
-            {isClamped && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
-                {group.maxWidth}/{group.width}-bit ({t.widthClampedBadge})
-              </span>
-            )}
-          </div>
-          <span className="text-cyan-300">
-            0x{(signals[group.baseName] ?? 0n).toString(16).toUpperCase()}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2.5">
-          {visibleBits.map(({ displayBit, runtimeBit }) => {
-            const on = getBit(group.baseName, runtimeBit);
-            return (
-              <div
-                key={displayBit}
-                title={`${group.componentId}[${runtimeBit}] ← ${group.baseName}${group.width > 1 ? `[${displayBit}]` : ''}`}
-                className="flex flex-col items-center min-w-[38px]"
-              >
-                <div
-                  className={`w-5 h-5 rounded-full border transition-all duration-75 ${
-                    on
-                      ? isGreen
-                        ? 'bg-emerald-400 border-emerald-200 shadow-[0_0_12px_#34d399]'
-                        : 'bg-rose-500 border-rose-200 shadow-[0_0_12px_#f43f5e]'
-                      : 'bg-slate-900 border-slate-700'
-                  }`}
-                />
-                <span className="text-[10px] font-mono text-slate-300 mt-1">
-                  [{displayBit}]
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
+  const issueByCompId = new Map<string, ComponentValidationIssue[]>();
+  for (const issue of validationIssues) {
+    const list = issueByCompId.get(issue.componentId) ?? [];
+    list.push(issue);
+    issueByCompId.set(issue.componentId, list);
+  }
 
   return (
     <div className="bg-gradient-to-br from-emerald-950/60 via-slate-900 to-indigo-950/40 border-2 border-emerald-600/40 rounded-2xl p-5 shadow-2xl relative overflow-hidden">
@@ -127,7 +83,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
           </div>
           <div>
             <div className="text-xs font-mono uppercase tracking-widest text-emerald-400 font-bold">
-              {t.boardDefaultFamily} • {t.boardDefaultPart}
+              {boardName || t.boardSubtitle}
             </div>
             <div className="text-sm font-semibold text-slate-100">
               {t.topEntityLabel}{' '}
@@ -135,81 +91,108 @@ export const BoardView: React.FC<BoardViewProps> = ({
             </div>
           </div>
         </div>
-
-        {/* Polarity & Button Mode Toggles */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button
-            onClick={() => setHexActiveLow((v) => !v)}
-            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-rose-500/35 font-mono text-rose-200 transition"
-          >
-            {t.segPolarityLabel} {hexActiveLow ? t.segActiveLow : t.segActiveHigh}
-          </button>
-          <button
-            onClick={() => setKeyMomentary((v) => !v)}
-            className="px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-amber-500/35 font-mono text-amber-200 transition"
-          >
-            {t.keyModeLabel} {keyMomentary ? t.keyMomentary : t.keyToggle}
-          </button>
-        </div>
       </div>
 
       <div className="space-y-6">
-        {/* 1. 7-Segment Displays (HEX) */}
-        {hexGroups.length > 0 && (
+        {/* 1. 7-Segment Displays */}
+        {hexComps.length > 0 && (
           <div>
             <div className="text-xs font-mono uppercase tracking-wider text-rose-300 mb-2.5 flex items-center gap-1.5 font-semibold">
               <Radio className="w-3.5 h-3.5 text-rose-400" />
               <span>{t.sectionHex}</span>
             </div>
             <div className="flex flex-wrap gap-3">
-              {hexGroups.map((group) => (
+              {hexComps.map((comp) => (
                 <SevenSegmentDisplay
-                  key={`${group.componentId}-${group.baseName}`}
-                  slotLabel={group.componentId}
-                  portName={group.baseName}
-                  value={signals[group.baseName] ?? 0n}
-                  activeLow={hexActiveLow}
+                  key={comp.id}
+                  label={comp.label}
+                  signalName={comp.signalName}
+                  value={signals[comp.signalName] ?? 0n}
+                  width={comp.width}
+                  polarity={comp.polarity}
+                  segmentMap={comp.segmentMap}
+                  showDecimalPoint={comp.showDecimalPoint}
+                  color={comp.color}
+                  hasIssue={(issueByCompId.get(comp.id)?.length ?? 0) > 0}
                 />
               ))}
             </div>
           </div>
         )}
 
-        {/* 2a. Red LEDs (LEDR) */}
-        {redLedGroups.length > 0 && (
+        {/* 2. Discrete LEDs */}
+        {ledComps.length > 0 && (
           <div>
-            <div className="text-xs font-mono uppercase tracking-wider text-rose-300 mb-2.5 flex items-center gap-1.5 font-semibold">
+            <div className="text-xs font-mono uppercase tracking-wider text-amber-300 mb-2.5 flex items-center gap-1.5 font-semibold">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block shadow-[0_0_8px_#f43f5e]" />
-              <span>{t.sectionRedLeds}</span>
+              <span>{t.sectionLeds}</span>
             </div>
             <div className="space-y-3">
-              {redLedGroups.map((group) => renderLedBank(group, 'red'))}
+              {ledComps.map((comp) => {
+                const indices = getOrderedBitIndices(comp.width, comp.bitOrder);
+                const sigVal = signals[comp.signalName] ?? 0n;
+                const issues = issueByCompId.get(comp.id) ?? [];
+
+                return (
+                  <div
+                    key={comp.id}
+                    className={`bg-slate-950/85 border rounded-xl p-3.5 shadow-inner ${
+                      issues.length > 0 ? 'border-amber-500/60' : 'border-slate-800'
+                    }`}
+                  >
+                    <div className="text-xs font-mono text-slate-300 mb-2.5 flex flex-wrap justify-between gap-2">
+                      <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+                        {comp.label}
+                        <span className="text-slate-400 font-normal">
+                          ({comp.signalName}[{comp.width - 1}:0] • {comp.bitOrder} •{' '}
+                          {comp.polarity === 'active-low'
+                            ? t.activeLowShort
+                            : t.activeHighShort}
+                          )
+                        </span>
+                        {issues.length > 0 && (
+                          <AlertTriangle
+                            className="w-3.5 h-3.5 text-amber-400"
+                            aria-label={issues[0].message}
+                          />
+                        )}
+                      </span>
+                      <span className="text-cyan-300">
+                        0x{sigVal.toString(16).toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2.5">
+                      {indices.map((bitIdx) => {
+                        const on = isRawBitActive(sigVal, bitIdx, comp.polarity);
+                        const bitLabel = comp.bitLabels?.[bitIdx]?.trim();
+                        return (
+                          <div
+                            key={bitIdx}
+                            title={`${comp.signalName}[${bitIdx}] (${comp.polarity})`}
+                            className="flex flex-col items-center min-w-[40px]"
+                          >
+                            <div
+                              className={`w-5 h-5 rounded-full border transition-all duration-75 ${
+                                on
+                                  ? LED_ON_STYLES[comp.color] ?? LED_ON_STYLES.rose
+                                  : 'bg-slate-900 border-slate-700'
+                              }`}
+                            />
+                            <span className="text-[10px] font-mono text-slate-300 mt-1">
+                              {bitLabel || `[${bitIdx}]`}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* 2b. Green LEDs (LEDG) */}
-        {greenLedGroups.length > 0 && (
-          <div>
-            <div className="text-xs font-mono uppercase tracking-wider text-emerald-300 mb-2.5 flex items-center gap-1.5 font-semibold">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block shadow-[0_0_8px_#34d399]" />
-              <span>{t.sectionGreenLeds}</span>
-            </div>
-            <div className="space-y-3">
-              {greenLedGroups.map((group) => renderLedBank(group, 'green'))}
-            </div>
-          </div>
-        )}
-
-        {hexGroups.length === 0 &&
-          redLedGroups.length === 0 &&
-          greenLedGroups.length === 0 && (
-            <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
-              {t.noOutputsHint}
-            </div>
-          )}
-
-        {/* 3. Slide Switches (SW) and Push Buttons (KEY) */}
+        {/* 3. Slide Switches and Push Buttons */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Slide Switches */}
           <div className="lg:col-span-2 space-y-3">
@@ -218,46 +201,50 @@ export const BoardView: React.FC<BoardViewProps> = ({
               <span>{t.sectionSwitches}</span>
             </div>
 
-            {swGroups.length === 0 ? (
+            {switchComps.length === 0 ? (
               <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
-                {t.noSwDetected}
+                {t.noSwConfigured}
               </div>
             ) : (
-              swGroups.map((group) => {
-                const visibleBits = buildVisibleBits(group);
-                const isClamped = group.width > group.maxWidth;
+              switchComps.map((comp) => {
+                const indices = getOrderedBitIndices(comp.width, comp.bitOrder);
+                const sigVal = signals[comp.signalName] ?? 0n;
+                const issues = issueByCompId.get(comp.id) ?? [];
 
                 return (
                   <div
-                    key={`${group.componentId}-${group.baseName}`}
-                    className="bg-slate-950/85 border border-cyan-500/20 rounded-xl p-3.5 shadow-inner"
+                    key={comp.id}
+                    className={`bg-slate-950/85 border rounded-xl p-3.5 shadow-inner ${
+                      issues.length > 0 ? 'border-amber-500/60' : 'border-cyan-500/20'
+                    }`}
                   >
-                    <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        <span className="text-cyan-300 font-semibold">SW</span> →{' '}
-                        <span className="text-slate-200 font-semibold">
-                          {group.baseName}
-                          {group.width > 1 ? `[${group.msb}:${group.lsb}]` : ''}
-                        </span>
+                    <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex flex-wrap justify-between gap-2">
+                      <span className="text-cyan-300 font-semibold flex items-center gap-1.5">
+                        {comp.label} ({comp.signalName}[{comp.width - 1}:0])
+                        {issues.length > 0 && (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        )}
                       </span>
-                      {isClamped && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
-                          {group.maxWidth}/{group.width}-bit ({t.widthClampedBadge})
-                        </span>
-                      )}
+                      <span>
+                        {comp.bitOrder} •{' '}
+                        {comp.polarity === 'active-low'
+                          ? t.activeLowShort
+                          : t.activeHighShort}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-2.5">
-                      {visibleBits.map(({ displayBit, runtimeBit }) => {
-                        const active = getBit(group.baseName, runtimeBit);
+                      {indices.map((bitIdx) => {
+                        const active = isRawBitActive(sigVal, bitIdx, comp.polarity);
+                        const rawBit = Number((sigVal >> BigInt(bitIdx)) & 1n);
+                        const bitLabel = comp.bitLabels?.[bitIdx]?.trim();
                         return (
                           <button
-                            key={displayBit}
+                            key={bitIdx}
                             type="button"
-                            onClick={() => onToggleInputBit(group.baseName, runtimeBit)}
-                            title={`SW${runtimeBit} → ${group.baseName}${group.width > 1 ? `[${displayBit}]` : ''} — ${t.clickToToggle}`}
-                            className="flex flex-col items-center group focus:outline-none"
+                            onClick={() => onToggleInputBit(comp.signalName, bitIdx)}
+                            title={`${comp.signalName}[${bitIdx}] — ${t.clickToToggle}`}
+                            className="flex flex-col items-center group focus:outline-none min-w-[38px]"
                           >
-                            {/* Physical Slide Switch Track */}
                             <div
                               className={`w-7 h-12 rounded-md p-1 flex flex-col justify-between border transition ${
                                 active
@@ -279,14 +266,14 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               />
                             </div>
                             <span className="text-[10px] font-mono text-slate-200 mt-1 font-semibold">
-                              SW{runtimeBit}
+                              {bitLabel || `${comp.signalName}[${bitIdx}]`}
                             </span>
                             <span
                               className={`text-[9px] font-mono font-bold ${
                                 active ? 'text-emerald-400' : 'text-slate-500'
                               }`}
                             >
-                              {active ? '1' : '0'}
+                              {rawBit}
                             </span>
                           </button>
                         );
@@ -305,57 +292,64 @@ export const BoardView: React.FC<BoardViewProps> = ({
               <span>{t.sectionButtons}</span>
             </div>
 
-            {keyGroups.length === 0 ? (
+            {keyComps.length === 0 ? (
               <div className="text-xs text-slate-400 bg-slate-950/60 border border-slate-800 rounded-xl p-4">
-                {t.noKeyDetected}
+                {t.noKeyConfigured}
               </div>
             ) : (
-              keyGroups.map((group) => {
-                const visibleBits = buildVisibleBits(group);
-                const isClamped = group.width > group.maxWidth;
+              keyComps.map((comp) => {
+                const indices = getOrderedBitIndices(comp.width, comp.bitOrder);
+                const sigVal = signals[comp.signalName] ?? 0n;
+                const issues = issueByCompId.get(comp.id) ?? [];
 
                 return (
                   <div
-                    key={`${group.componentId}-${group.baseName}`}
-                    className="bg-slate-950/85 border border-amber-500/20 rounded-xl p-3.5 shadow-inner"
+                    key={comp.id}
+                    className={`bg-slate-950/85 border rounded-xl p-3.5 shadow-inner ${
+                      issues.length > 0 ? 'border-amber-500/60' : 'border-amber-500/20'
+                    }`}
                   >
-                    <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        <span className="text-amber-300 font-semibold">KEY</span> →{' '}
-                        <span className="text-slate-200 font-semibold">
-                          {group.baseName}
-                          {group.width > 1 ? `[${group.msb}:${group.lsb}]` : ''}
-                        </span>
+                    <div className="text-[11px] font-mono text-slate-400 mb-2.5 flex flex-wrap justify-between gap-1">
+                      <span className="text-amber-300 font-semibold flex items-center gap-1">
+                        {comp.label} ({comp.signalName})
+                        {issues.length > 0 && (
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        )}
                       </span>
-                      {isClamped && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300">
-                          {group.maxWidth}/{group.width}-bit
-                        </span>
-                      )}
+                      <span>
+                        {comp.behavior === 'momentary' ? t.momentaryShort : t.toggleShort} •{' '}
+                        {comp.polarity === 'active-low'
+                          ? t.activeLowShort
+                          : t.activeHighShort}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-3 justify-center">
-                      {visibleBits.map(({ displayBit, runtimeBit }) => {
-                        const pressed = getBit(group.baseName, runtimeBit);
+                      {indices.map((bitIdx) => {
+                        const pressed = isRawBitActive(sigVal, bitIdx, comp.polarity);
+                        const rawBit = Number((sigVal >> BigInt(bitIdx)) & 1n);
+                        const bitLabel = comp.bitLabels?.[bitIdx]?.trim();
+                        const pressedRaw = logicalStateToRawBit(true, comp.polarity);
+                        const releasedRaw = logicalStateToRawBit(false, comp.polarity);
 
                         return (
-                          <div key={displayBit} className="flex flex-col items-center">
+                          <div key={bitIdx} className="flex flex-col items-center">
                             <button
                               type="button"
                               onMouseDown={() => {
-                                if (keyMomentary) {
-                                  onSetInputBit(group.baseName, runtimeBit, 1);
+                                if (comp.behavior === 'momentary') {
+                                  onSetInputBit(comp.signalName, bitIdx, pressedRaw);
                                 } else {
-                                  onToggleInputBit(group.baseName, runtimeBit);
+                                  onToggleInputBit(comp.signalName, bitIdx);
                                 }
                               }}
                               onMouseUp={() => {
-                                if (keyMomentary) {
-                                  onSetInputBit(group.baseName, runtimeBit, 0);
+                                if (comp.behavior === 'momentary') {
+                                  onSetInputBit(comp.signalName, bitIdx, releasedRaw);
                                 }
                               }}
                               onMouseLeave={() => {
-                                if (keyMomentary && pressed) {
-                                  onSetInputBit(group.baseName, runtimeBit, 0);
+                                if (comp.behavior === 'momentary' && pressed) {
+                                  onSetInputBit(comp.signalName, bitIdx, releasedRaw);
                                 }
                               }}
                               className={`w-12 h-12 rounded-xl border-2 flex items-center justify-center transition transform ${
@@ -371,10 +365,10 @@ export const BoardView: React.FC<BoardViewProps> = ({
                               />
                             </button>
                             <span className="text-[11px] font-mono text-slate-200 mt-1.5 font-semibold">
-                              KEY{runtimeBit}
+                              {bitLabel || `${comp.signalName}[${bitIdx}]`}
                             </span>
                             <span className="text-[9px] font-mono text-slate-400">
-                              {t.valLabel} {pressed ? '1' : '0'}
+                              {t.valLabel} {rawBit}
                             </span>
                           </div>
                         );
