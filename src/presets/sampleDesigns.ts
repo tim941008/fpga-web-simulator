@@ -1,4 +1,8 @@
-import { BoardComponentId } from '../types/fpga';
+import { HardwareConfigSchema } from '../types/hardwareConfig';
+import {
+  createCombAluHardwareConfig,
+  createFullDemoHardwareConfig,
+} from '../config/defaultHardwareConfig';
 
 export interface SamplePreset {
   id: string;
@@ -6,8 +10,7 @@ export interface SamplePreset {
   description: string;
   verilogFilename: string;
   verilogCode: string;
-  /** Optional explicit default I/O component mapping (also supports arbitrary custom port names) */
-  defaultIoConfig?: Partial<Record<string, BoardComponentId>>;
+  createHardwareConfig: () => HardwareConfigSchema;
 }
 
 export const SAMPLE_PRESETS: SamplePreset[] = [
@@ -129,16 +132,7 @@ module top_fpga_demo (
 
 endmodule
 `,
-    defaultIoConfig: {
-      CLOCK_50: 'CLOCK',
-      KEY: 'KEY',
-      SW: 'SW',
-      LEDR: 'LEDR',
-      HEX0: 'HEX0',
-      HEX1: 'HEX1',
-      MATRIX_ROW: 'MATRIX_ROW',
-      MATRIX_COL: 'MATRIX_COL',
-    },
+    createHardwareConfig: createFullDemoHardwareConfig,
   },
   {
     id: 'comb-alu',
@@ -189,72 +183,6 @@ endmodule
     end
 endmodule
 `,
-    defaultIoConfig: {
-      KEY: 'KEY',
-      SW: 'SW',
-      LEDR: 'LEDR',
-      HEX0: 'HEX0',
-    },
-  },
-  {
-    id: 'custom-io-demo',
-    name: 'Custom Port Names Demo (Red + Green LEDs + 7-Seg)',
-    description:
-      'Demonstrates arbitrary Verilog port names mapped via GUI I/O Pin Configuration to Clock, KEY, SW, LEDR, LEDG, and HEX0.',
-    verilogFilename: 'custom_port_counter.v',
-    verilogCode: `// ============================================================================
-// Custom Port Names Demo — Mapped via Visual I/O Pin Configuration
-// ============================================================================
-module custom_port_counter (
-    input  wire       sys_pulse,
-    input  wire [1:0] ctrl_btns,
-    input  wire [7:0] dip_inputs,
-    output wire [7:0] red_bar,
-    output wire [3:0] green_bar,
-    output reg  [6:0] digit_seg
-);
-    reg [7:0] count_q;
-
-    always @(posedge sys_pulse) begin
-        if (ctrl_btns[0]) begin
-            count_q <= 8'd0;
-        end else if (!ctrl_btns[1]) begin
-            count_q <= count_q + 8'd1;
-        end
-    end
-
-    assign red_bar   = count_q ^ dip_inputs;
-    assign green_bar = count_q[3:0];
-
-    always @(*) begin
-        case (count_q[3:0])
-            4'h0: digit_seg = 7'b1000000;
-            4'h1: digit_seg = 7'b1111001;
-            4'h2: digit_seg = 7'b0100100;
-            4'h3: digit_seg = 7'b0110000;
-            4'h4: digit_seg = 7'b0011001;
-            4'h5: digit_seg = 7'b0010010;
-            4'h6: digit_seg = 7'b0000010;
-            4'h7: digit_seg = 7'b1111000;
-            4'h8: digit_seg = 7'b0000000;
-            4'h9: digit_seg = 7'b0010000;
-            4'hA: digit_seg = 7'b0001000;
-            4'hB: digit_seg = 7'b0000011;
-            4'hC: digit_seg = 7'b1000110;
-            4'hD: digit_seg = 7'b0100001;
-            4'hE: digit_seg = 7'b0000110;
-            default: digit_seg = 7'b0001110;
-        endcase
-    end
-endmodule
-`,
-    defaultIoConfig: {
-      sys_pulse: 'CLOCK',
-      ctrl_btns: 'KEY',
-      dip_inputs: 'SW',
-      red_bar: 'LEDR',
-      green_bar: 'LEDG',
-      digit_seg: 'HEX0',
-    },
+    createHardwareConfig: createCombAluHardwareConfig,
   },
 ];

@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
-import {
-  IoValidationSummary,
-  PortDefinition,
-  SignalHistoryEntry,
-} from '../types/fpga';
+import { PortDefinition, SignalHistoryEntry } from '../types/fpga';
+import { HardwareComponentConfig } from '../types/hardwareConfig';
+import { getMappedComponentsForSignal } from '../config/hardwareMapping';
 import { Activity, Binary } from 'lucide-react';
-import { getComponentLabel, TranslationDict } from '../i18n/translations';
+import { TranslationDict } from '../i18n/translations';
 
 interface SignalMonitorProps {
   signalDefs: PortDefinition[];
   signals: Record<string, bigint>;
   history: SignalHistoryEntry[];
-  ioValidation: IoValidationSummary;
+  components: HardwareComponentConfig[];
   t: TranslationDict;
 }
 
@@ -21,12 +19,11 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
   signalDefs,
   signals,
   history,
-  ioValidation,
+  components,
   t,
 }) => {
   const [radix, setRadix] = useState<RadixMode>('hex');
 
-  // Pad binary representation to full declared bit width
   const formatValue = (val: bigint, width: number): string => {
     const mask = (1n << BigInt(width)) - 1n;
     const masked = val & mask;
@@ -38,28 +35,6 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
       return '0b' + masked.toString(2).padStart(width, '0');
     }
     return masked.toString(10);
-  };
-
-  const renderAssignedComponent = (signalName: string) => {
-    const res = ioValidation.byPort[signalName];
-    if (!res) {
-      return <span className="text-slate-500">{t.internalVirtual}</span>;
-    }
-    if (!res.componentId) {
-      return <span className="text-slate-500">{t.ioStatusUnassigned}</span>;
-    }
-
-    const label = getComponentLabel(res.componentId, t);
-    if (res.status === 'invalid') {
-      return <span className="text-rose-400">✕ {label}</span>;
-    }
-    if (res.status === 'conflict') {
-      return <span className="text-orange-400">⚠ {label}</span>;
-    }
-    if (res.issues.some((i) => i.severity === 'warning')) {
-      return <span className="text-amber-300">⚠ {label}</span>;
-    }
-    return <span className="text-emerald-300">{label}</span>;
   };
 
   const recentHistory = history.slice(-24);
@@ -81,6 +56,7 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
           {(['hex', 'bin', 'dec'] as RadixMode[]).map((mode) => (
             <button
               key={mode}
+              type="button"
               onClick={() => setRadix(mode)}
               className={`px-2.5 py-1 rounded-lg uppercase font-semibold transition ${
                 radix === mode
@@ -101,7 +77,7 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
               <th className="py-2 px-3">{t.colSignal}</th>
               <th className="py-2 px-2">{t.colDirection}</th>
               <th className="py-2 px-2">{t.colWidth}</th>
-              <th className="py-2 px-3">{t.colAssignedComponent}</th>
+              <th className="py-2 px-3">{t.colHardwareMap}</th>
               <th className="py-2 px-3">{t.colCurrentVal}</th>
               <th className="py-2 px-3 min-w-[260px]">{t.colWaveform}</th>
             </tr>
@@ -110,6 +86,7 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
             {signalDefs.map((def) => {
               const val = signals[def.name] ?? 0n;
               const isSingleBit = def.width === 1;
+              const mapped = getMappedComponentsForSignal(def.name, components);
 
               return (
                 <tr key={def.name} className="hover:bg-slate-800/40 transition">
@@ -131,14 +108,17 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
                     </span>
                   </td>
                   <td className="py-2.5 px-2 text-slate-400">{def.width}-bit</td>
-                  <td className="py-2.5 px-3 text-[11px]">
-                    {renderAssignedComponent(def.name)}
+                  <td className="py-2.5 px-3 text-slate-400 text-[11px]">
+                    {mapped.length > 0 ? (
+                      <span className="text-emerald-300">{mapped.join(', ')}</span>
+                    ) : (
+                      t.unmappedSignal
+                    )}
                   </td>
                   <td className="py-2.5 px-3 text-cyan-300 font-semibold">
                     {formatValue(val, def.width)}
                   </td>
                   <td className="py-2.5 px-3">
-                    {/* Render SVG Digital Waveform */}
                     <div className="bg-slate-950 border border-slate-800/90 rounded-lg px-2 py-1">
                       {recentHistory.length <= 1 ? (
                         <span className="text-slate-500 text-[10px]">

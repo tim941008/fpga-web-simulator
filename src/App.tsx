@@ -4,7 +4,7 @@ import {
   FolderUp,
   Layers,
   Code2,
-  SlidersHorizontal,
+  Sliders,
   CheckCircle2,
   AlertTriangle,
   XCircle,
@@ -15,36 +15,39 @@ import {
 import { parseVerilogSource } from './parsers/verilogParser';
 import { CompileMessage, FpgaRuntime } from './sim/fpgaRuntime';
 import { SAMPLE_PRESETS } from './presets/sampleDesigns';
+import { PortDefinition, SignalHistoryEntry } from './types/fpga';
 import {
-  BoardComponentId,
-  PortDefinition,
-  PortIoAssignment,
-  SignalHistoryEntry,
-} from './types/fpga';
+  ClockComponentConfig,
+  HardwareConfigSchema,
+  MatrixComponentConfig,
+} from './types/hardwareConfig';
 import {
-  autoAssignPorts,
-  buildBoardMappings,
-  clearSavedIoConfig,
-  loadSavedIoConfig,
-  reconcileIoAssignments,
-  saveIoConfig,
-  validateIoConfig,
-} from './config/ioConfig';
+  computeInitialInputSignals,
+  setSignalBit,
+  toggleSignalBit,
+  validateHardwareConfig,
+} from './config/hardwareMapping';
+import {
+  createEmptyMatrixBuffer,
+  renderPatternToMatrixBuffer,
+  sampleLiveMatrixIntoBuffer,
+} from './config/matrixMapping';
+import {
+  loadHardwareConfig,
+  resetHardwareConfig,
+  saveHardwareConfig,
+} from './config/configPersistence';
 import { BackendMode, ClockControls } from './components/ClockControls';
 import { BoardView } from './components/BoardView';
 import { MatrixViewer } from './components/MatrixViewer';
 import { SignalMonitor } from './components/SignalMonitor';
-import { IoConfigPanel } from './components/IoConfigPanel';
+import { HardwareConfigPanel } from './components/HardwareConfigPanel';
 import {
-  formatValidationIssue,
   getInitialLanguage,
   Language,
   saveLanguage,
   TRANSLATIONS,
 } from './i18n/translations';
-
-const createEmpty16x16 = (): number[][] =>
-  Array.from({ length: 16 }, () => Array(16).fill(0));
 
 const FRAME_MS = 16; // UI refresh period while the clock runs
 const HISTORY_LEN = 64;
@@ -52,16 +55,6 @@ const HISTORY_LEN = 64;
 interface SourceFile {
   name: string;
   content: string;
-}
-
-function getInitialIoAssignments(): Record<string, PortIoAssignment> {
-  const firstPreset = SAMPLE_PRESETS[0];
-  const parsed = parseVerilogSource([firstPreset.verilogCode]);
-  const saved = loadSavedIoConfig(parsed.topModule);
-  if (saved && Object.keys(saved).length > 0) {
-    return reconcileIoAssignments(saved, parsed.ports);
-  }
-  return autoAssignPorts(parsed.ports, firstPreset.defaultIoConfig);
 }
 
 export const App: React.FC = () => {
@@ -76,24 +69,24 @@ export const App: React.FC = () => {
   };
 
   // ------------------------------------------------------------------ sources
-  const [selectedPresetId, setSelectedPresetId] = useState<string>(
-    SAMPLE_PRESETS[0].id
-  );
+  const [selectedPresetId, setSelectedPresetId] = useState<string>(SAMPLE_PRESETS[0].id);
   const [verilogFiles, setVerilogFiles] = useState<SourceFile[]>([
-    {
-      name: SAMPLE_PRESETS[0].verilogFilename,
-      content: SAMPLE_PRESETS[0].verilogCode,
-    },
+    { name: SAMPLE_PRESETS[0].verilogFilename, content: SAMPLE_PRESETS[0].verilogCode },
   ]);
   const [editIndex, setEditIndex] = useState(0);
 
-  // -------------------------------------------------------- I/O configuration
-  const [ioAssignments, setIoAssignments] = useState<
-    Record<string, PortIoAssignment>
-  >(getInitialIoAssignments);
+  // ------------------------------------------------ hardware configuration (persisted)
+  const [hardwareConfig, setHardwareConfig] = useState<HardwareConfigSchema>(() => {
+    const { config } = loadHardwareConfig(SAMPLE_PRESETS[0].createHardwareConfig());
+    return config;
+  });
+
+  useEffect(() => {
+    saveHardwareConfig(hardwareConfig);
+  }, [hardwareConfig]);
 
   // --------------------------------------------------------------- sim state
-  const [activeTab, setActiveTab] = useState<'board' | 'io' | 'code'>('board');
+  const [activeTab, setActiveTab] = useState<'board' | 'code' | 'config'>('board');
   const [running, setRunning] = useState(false);
   const [clockHz, setClockHz] = useState(30);
   const [cycleCount, setCycleCount] = useState(0);
@@ -107,24 +100,20 @@ export const App: React.FC = () => {
   const [runtimePorts, setRuntimePorts] = useState<PortDefinition[] | null>(null);
   const [runtimeInternals, setRuntimeInternals] = useState<PortDefinition[]>([]);
 
-  // 16x16 matrix
-  const [matrixBuffer, setMatrixBuffer] = useState<number[][]>(createEmpty16x16);
-  const [povEnabled, setPovEnabled] = useState(true);
-  const [invertColPolarity, setInvertColPolarity] = useState(false);
+  // 16x16 matrix live intensity buffer
+  const [matrixBuffer, setMatrixBuffer] = useState<number[][]>(() => createEmptyMatrixBuffer());
 
   const runtimeRef = useRef<FpgaRuntime | null>(null);
   const cycleRef = useRef(0);
   const clockLevelRef = useRef<0 | 1>(0);
-  const matrixRef = useRef<number[][]>(createEmpty16x16());
+  const matrixRef = useRef<number[][]>(createEmptyMatrixBuffer());
   const compileSeq = useRef(0);
   const wasmCachedRef = useRef(false);
   const debounceCompileRef = useRef(false);
-  const prevTopModuleRef = useRef<string>(
-    parseVerilogSource([SAMPLE_PRESETS[0].verilogCode]).topModule
-  );
-  const skipNextReconcileRef = useRef(false);
+  const hardwareConfigRef = useRef(hardwareConfig);
+  hardwareConfigRef.current = hardwareConfig;
 
-  // ------------------------------------------------------------ Verilog parsing
+  // ------------------------------------------------------------ parsing & validation
   const verilogOnlyContents = useMemo(
     () =>
       verilogFiles
@@ -140,96 +129,58 @@ export const App: React.FC = () => {
 
   const topModule = verilogParsed.topModule;
 
-  // Ports reported by Verilator are authoritative; fall back to parser before compile completes
+  // Ports reported by Verilator are authoritative; fall back to the parser before first compile
   const ports = runtimePorts ?? verilogParsed.ports;
 
-  // Reconcile I/O assignments automatically when ports or topModule change
-  useEffect(() => {
-    if (skipNextReconcileRef.current) {
-      skipNextReconcileRef.current = false;
-      prevTopModuleRef.current = topModule;
-      return;
-    }
+  const validationIssues = useMemo(
+    () => validateHardwareConfig(hardwareConfig.components, ports),
+    [hardwareConfig.components, ports]
+  );
 
-    const topChanged = prevTopModuleRef.current !== topModule;
-    prevTopModuleRef.current = topModule;
+  const activeClockConfig = useMemo(
+    () =>
+      hardwareConfig.components.find(
+        (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+      ) ?? null,
+    [hardwareConfig.components]
+  );
 
-    if (ports.length === 0) return;
+  const clkName = useMemo(() => {
+    if (!activeClockConfig || !activeClockConfig.signalName) return null;
+    const exists = ports.some(
+      (p) => p.name === activeClockConfig.signalName && p.direction === 'input'
+    );
+    return exists ? activeClockConfig.signalName : null;
+  }, [activeClockConfig, ports]);
 
-    if (topChanged) {
-      const saved = loadSavedIoConfig(topModule);
-      if (saved && Object.keys(saved).length > 0) {
-        setIoAssignments(reconcileIoAssignments(saved, ports));
+  const activeMatrixConfig = useMemo(
+    () =>
+      hardwareConfig.components.find(
+        (c): c is MatrixComponentConfig => c.enabled && c.type === 'MATRIX'
+      ) ?? null,
+    [hardwareConfig.components]
+  );
+
+  const isMatrixConnected = useMemo(() => {
+    if (!activeMatrixConfig) return false;
+    const hasRow = ports.some((p) => p.name === activeMatrixConfig.row.signalName);
+    const hasCol = ports.some((p) => p.name === activeMatrixConfig.col.signalName);
+    return hasRow && hasCol;
+  }, [activeMatrixConfig, ports]);
+
+  // --------------------------------------------------------------- matrix sampling
+  const sampleMatrix = useCallback(
+    (sig: Record<string, bigint>, matrixCfg: MatrixComponentConfig | null = activeMatrixConfig) => {
+      if (!matrixCfg) return;
+      if (matrixCfg.displayMode === 'pattern') {
+        matrixRef.current = renderPatternToMatrixBuffer(matrixCfg.pattern, matrixCfg);
         return;
       }
-      setIoAssignments((prev) =>
-        reconcileIoAssignments(prev, ports, { autoAssignIfNoOverlap: true })
-      );
-      return;
-    }
-
-    setIoAssignments((prev) =>
-      reconcileIoAssignments(prev, ports, { autoAssignIfNoOverlap: false })
-    );
-  }, [ports, topModule]);
-
-  // Persist user I/O assignments per topModule in localStorage
-  useEffect(() => {
-    if (topModule && ports.length > 0) {
-      saveIoConfig(topModule, ioAssignments);
-    }
-  }, [topModule, ports.length, ioAssignments]);
-
-  // Validate I/O assignments and build board & runtime mappings
-  const ioValidation = useMemo(
-    () => validateIoConfig(ports, ioAssignments),
-    [ports, ioAssignments]
-  );
-
-  const boardMappings = useMemo(
-    () => buildBoardMappings(ioValidation),
-    [ioValidation]
-  );
-
-  const controlGroups = boardMappings.controlGroups;
-  const clkName = boardMappings.clockSignalName;
-  const rowSigName = boardMappings.matrixRowSignal;
-  const colSigName = boardMappings.matrixColSignal;
-  const hasMatrixPorts = boardMappings.hasMatrixConnection;
-
-  // --------------------------------------------------------------- matrix POV
-  const sampleMatrix = useCallback(
-    (
-      sig: Record<string, bigint>,
-      usePov: boolean = povEnabled,
-      invertCol: boolean = invertColPolarity
-    ) => {
-      const rowVal = rowSigName ? sig[rowSigName] ?? 0n : 0n;
-      const raw = colSigName ? sig[colSigName] ?? 0n : 0n;
-      const colVal = invertCol ? ~raw & 0xffffn : raw & 0xffffn;
-      const buf = matrixRef.current;
-
-      for (let r = 0; r < 16; r++) {
-        const rowActive = ((rowVal >> BigInt(r)) & 1n) === 1n;
-        if (!rowActive) {
-          if (!usePov) {
-            for (let c = 0; c < 16; c++) buf[r][c] = 0;
-          } else {
-            for (let c = 0; c < 16; c++) buf[r][c] *= 0.96;
-          }
-          continue;
-        }
-        for (let c = 0; c < 16; c++) {
-          const on = ((colVal >> BigInt(15 - c)) & 1n) === 1n;
-          if (on) {
-            buf[r][c] = 1;
-          } else {
-            buf[r][c] = usePov ? buf[r][c] * 0.5 : 0;
-          }
-        }
-      }
+      const rowVal = sig[matrixCfg.row.signalName] ?? 0n;
+      const colVal = sig[matrixCfg.col.signalName] ?? 0n;
+      sampleLiveMatrixIntoBuffer(matrixRef.current, rowVal, colVal, matrixCfg);
     },
-    [rowSigName, colSigName, invertColPolarity, povEnabled]
+    [activeMatrixConfig]
   );
 
   const publishMatrix = useCallback(() => {
@@ -237,17 +188,27 @@ export const App: React.FC = () => {
   }, []);
 
   const clearMatrix = useCallback(() => {
-    matrixRef.current = createEmpty16x16();
+    matrixRef.current = createEmptyMatrixBuffer();
     publishMatrix();
   }, [publishMatrix]);
 
-  // Refresh matrix buffer immediately when matrix port bindings change
+  // Re-render matrix display immediately when Matrix display orientation / polarity / mode changes
+  // without ever modifying underlying Verilog signal values.
   useEffect(() => {
-    matrixRef.current = createEmpty16x16();
-    sampleMatrix(signals, povEnabled, invertColPolarity);
-    publishMatrix();
+    if (!activeMatrixConfig) return;
+    if (activeMatrixConfig.displayMode === 'pattern') {
+      matrixRef.current = renderPatternToMatrixBuffer(
+        activeMatrixConfig.pattern,
+        activeMatrixConfig
+      );
+      publishMatrix();
+    } else {
+      matrixRef.current = createEmptyMatrixBuffer();
+      sampleMatrix(signals, activeMatrixConfig);
+      publishMatrix();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowSigName, colSigName]);
+  }, [activeMatrixConfig]);
 
   // ---------------------------------------------------------------- compile
   const compile = useCallback(async () => {
@@ -267,9 +228,8 @@ export const App: React.FC = () => {
     if (!result.runtime) {
       setBackendMode('none');
       setRuntimePorts(null);
-      setCompileInfo(
-        `Verilator failed (${result.timings.verilatorMs.toFixed(0)} ms)`
-      );
+      setRuntimeInternals([]);
+      setCompileInfo(`Verilator failed (${result.timings.verilatorMs.toFixed(0)} ms)`);
       return;
     }
 
@@ -283,6 +243,16 @@ export const App: React.FC = () => {
       `Verilator ${result.timings.verilatorMs.toFixed(0)} ms + codegen ${result.timings.codegenMs.toFixed(0)} ms`
     );
 
+    // Apply configured initial input states (respecting Switch initialValue & KEY polarity)
+    const initialInputs = computeInitialInputSignals(
+      hardwareConfigRef.current.components,
+      rt.ports
+    );
+    for (const [sigName, val] of Object.entries(initialInputs)) {
+      rt.setSignal(sigName, val);
+    }
+    rt.eval();
+
     cycleRef.current = 0;
     clockLevelRef.current = 0;
     setCycleCount(0);
@@ -290,13 +260,16 @@ export const App: React.FC = () => {
     const sig = rt.getSignals();
     setSignals(sig);
     setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
-    matrixRef.current = createEmpty16x16();
-    sampleMatrix(sig);
+    matrixRef.current = createEmptyMatrixBuffer();
+    const matrixCfg =
+      hardwareConfigRef.current.components.find(
+        (c): c is MatrixComponentConfig => c.enabled && c.type === 'MATRIX'
+      ) ?? null;
+    sampleMatrix(sig, matrixCfg);
     publishMatrix();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [verilogFiles, topModule]);
 
-  // Compile immediately on initial mount, preset switch, or file upload; debounce only textarea edits
   useEffect(() => {
     const delay = debounceCompileRef.current ? 450 : 0;
     debounceCompileRef.current = false;
@@ -325,7 +298,6 @@ export const App: React.FC = () => {
     pushHistory([{ cycle: cycleRef.current, halfCycle: next, values: sig }]);
   };
 
-  /** Runs n full cycles; returns the snapshots taken after each edge. */
   const runCycles = (n: number): SignalHistoryEntry[] => {
     const rt = runtimeRef.current;
     if (!rt) return [];
@@ -364,13 +336,8 @@ export const App: React.FC = () => {
     pushHistory(snaps);
   };
 
-  // Continuous clock: run ceil(Hz * frame) cycles per UI frame
   useEffect(() => {
     if (!running) return;
-    if (!clkName) {
-      setRunning(false);
-      return;
-    }
     let carry = 0;
     let last = performance.now();
     const timer = window.setInterval(() => {
@@ -403,7 +370,7 @@ export const App: React.FC = () => {
   // ------------------------------------------------------------- inputs
   const applyInput = (signalName: string, update: (cur: bigint) => bigint) => {
     const rt = runtimeRef.current;
-    if (!rt) return;
+    if (!rt || !rt.hasSignal(signalName)) return;
     const cur = rt.getSignals()[signalName] ?? 0n;
     rt.setSignal(signalName, update(cur));
     rt.eval();
@@ -412,7 +379,6 @@ export const App: React.FC = () => {
     publishMatrix();
     setSignals(sig);
 
-    // Record waveform sample when combinational inputs change while clock is paused or absent
     if (!running || !clkName) {
       pushHistory([
         { cycle: cycleRef.current, halfCycle: clockLevelRef.current, values: sig },
@@ -421,25 +387,20 @@ export const App: React.FC = () => {
   };
 
   const handleToggleInputBit = (name: string, bit: number) =>
-    applyInput(name, (cur) => cur ^ (1n << BigInt(bit)));
+    applyInput(name, (cur) => toggleSignalBit(cur, bit));
 
   const handleSetInputBit = (name: string, bit: number, v: 0 | 1) =>
-    applyInput(name, (cur) =>
-      v ? cur | (1n << BigInt(bit)) : cur & ~(1n << BigInt(bit))
-    );
+    applyInput(name, (cur) => setSignalBit(cur, bit, v));
 
   const handleReset = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
     setRunning(false);
-    const inputs: Record<string, bigint> = {};
-    const cur = rt.getSignals();
-    for (const p of rt.ports) {
-      if (p.direction === 'input' && p.name !== clkName) {
-        inputs[p.name] = cur[p.name] ?? 0n;
-      }
-    }
-    rt.reset(inputs);
+    const initialInputs = computeInitialInputSignals(
+      hardwareConfigRef.current.components,
+      rt.ports
+    );
+    rt.reset(initialInputs);
     cycleRef.current = 0;
     clockLevelRef.current = 0;
     const sig = rt.getSignals();
@@ -447,84 +408,12 @@ export const App: React.FC = () => {
     setCycleCount(0);
     setSignals(sig);
     setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
-    matrixRef.current = createEmpty16x16();
+    matrixRef.current = createEmptyMatrixBuffer();
     sampleMatrix(sig);
     publishMatrix();
   };
 
-  // ------------------------------------------------------------- I/O config handlers
-  const activePresetDefaults = useMemo(() => {
-    const preset = SAMPLE_PRESETS.find((p) => p.id === selectedPresetId);
-    if (!preset) return undefined;
-    const presetTop = parseVerilogSource([preset.verilogCode]).topModule;
-    return presetTop === topModule ? preset.defaultIoConfig : undefined;
-  }, [selectedPresetId, topModule]);
-
-  const handleAssignPort = (
-    port: PortDefinition,
-    componentId: BoardComponentId | null
-  ) => {
-    setIoAssignments((prev) => {
-      const next = { ...prev };
-      if (!componentId) {
-        delete next[port.name];
-      } else {
-        next[port.name] = {
-          componentId,
-          configuredDirection: port.direction,
-          configuredWidth: port.width,
-        };
-      }
-      return next;
-    });
-  };
-
-  const handleAutoAssign = () => {
-    setIoAssignments((prev) => {
-      // Preserve currently valid assignments and auto-assign unassigned ports
-      const kept: Record<string, PortIoAssignment> = {};
-      const usedComponents = new Set<BoardComponentId>();
-      for (const res of ioValidation.results) {
-        if (res.status === 'configured' && res.componentId && prev[res.port.name]) {
-          kept[res.port.name] = prev[res.port.name];
-          usedComponents.add(res.componentId);
-        }
-      }
-      const suggested = autoAssignPorts(ports, activePresetDefaults);
-      for (const [portName, assignment] of Object.entries(suggested)) {
-        if (kept[portName] || usedComponents.has(assignment.componentId)) continue;
-        kept[portName] = assignment;
-        usedComponents.add(assignment.componentId);
-      }
-      return kept;
-    });
-  };
-
-  const handleResetIoDefaults = () => {
-    clearSavedIoConfig(topModule);
-    setIoAssignments(autoAssignPorts(ports, activePresetDefaults));
-  };
-
-  const handleClearAllIo = () => {
-    setIoAssignments({});
-  };
-
   // ------------------------------------------------------------- uploads & presets
-  const handleSelectPreset = (presetId: string) => {
-    const preset = SAMPLE_PRESETS.find((p) => p.id === presetId);
-    if (!preset) return;
-    const parsed = parseVerilogSource([preset.verilogCode]);
-    setSelectedPresetId(preset.id);
-    debounceCompileRef.current = false;
-    skipNextReconcileRef.current = true;
-    setRuntimePorts(null);
-    setEditIndex(0);
-    setVerilogFiles([
-      { name: preset.verilogFilename, content: preset.verilogCode },
-    ]);
-    setIoAssignments(autoAssignPorts(parsed.ports, preset.defaultIoConfig));
-  };
-
   const handleUploadVerilogFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const loaded: SourceFile[] = [];
@@ -532,18 +421,27 @@ export const App: React.FC = () => {
       loaded.push({ name: file.name, content: await file.text() });
     }
     debounceCompileRef.current = false;
-    setSelectedPresetId('');
     setRuntimePorts(null);
     setEditIndex(0);
     setVerilogFiles(loaded);
   };
 
+  const handleRestoreDefaultConfig = () => {
+    const preset =
+      SAMPLE_PRESETS.find((p) => p.id === selectedPresetId) ?? SAMPLE_PRESETS[0];
+    const restored = resetHardwareConfig(preset.createHardwareConfig());
+    setHardwareConfig(restored);
+  };
+
+  const handleUpdateMatrixConfig = (updated: MatrixComponentConfig) => {
+    setHardwareConfig((prev) => ({
+      ...prev,
+      components: prev.components.map((c) => (c.id === updated.id ? updated : c)),
+    }));
+  };
+
   const errorCount = messages.filter((m) => m.severity === 'error').length;
   const warnCount = messages.length - errorCount;
-  const ioErrorCount = ioValidation.conflictCount + ioValidation.invalidCount;
-  const ioIssuesToBanner = ioValidation.results.flatMap((r) =>
-    r.issues.filter((i) => i.severity === 'error')
-  );
   const signalDefs = [...ports, ...runtimeInternals];
 
   return (
@@ -576,14 +474,21 @@ export const App: React.FC = () => {
             {/* Preset Selector */}
             <select
               value={selectedPresetId}
-              onChange={(e) => handleSelectPreset(e.target.value)}
+              onChange={(e) => {
+                const preset = SAMPLE_PRESETS.find((p) => p.id === e.target.value);
+                if (preset) {
+                  setSelectedPresetId(preset.id);
+                  debounceCompileRef.current = false;
+                  setRuntimePorts(null);
+                  setEditIndex(0);
+                  setVerilogFiles([
+                    { name: preset.verilogFilename, content: preset.verilogCode },
+                  ]);
+                  setHardwareConfig(preset.createHardwareConfig());
+                }
+              }}
               className="bg-slate-950 border border-indigo-500/35 hover:border-indigo-400/60 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-400 transition"
             >
-              {selectedPresetId === '' && (
-                <option value="" disabled>
-                  {t.presetCustomUploaded}
-                </option>
-              )}
               {SAMPLE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
                   {t.presetLabel} {p.name}
@@ -638,17 +543,16 @@ export const App: React.FC = () => {
           onChangeClockHz={setClockHz}
         />
 
-        {/* Compiler & I/O Validation Banner */}
+        {/* Compiler & Hardware Validation Banner */}
         {(compiling ||
           messages.length > 0 ||
           compileInfo ||
-          ioErrorCount > 0 ||
-          ioValidation.warningCount > 0) && (
+          validationIssues.length > 0) && (
           <div
             className={`rounded-xl border p-3 text-xs font-mono space-y-1 max-h-48 overflow-y-auto shadow-md ${
-              errorCount || ioErrorCount > 0
+              errorCount
                 ? 'border-rose-500/50 bg-rose-950/35'
-                : warnCount || ioValidation.warningCount > 0
+                : warnCount || validationIssues.length > 0
                 ? 'border-amber-500/50 bg-amber-950/25'
                 : 'border-emerald-500/40 bg-emerald-950/25'
             }`}
@@ -656,9 +560,9 @@ export const App: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2 text-slate-200">
               {compiling ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-300" />
-              ) : errorCount || ioErrorCount > 0 ? (
+              ) : errorCount ? (
                 <XCircle className="w-3.5 h-3.5 text-rose-400" />
-              ) : warnCount || ioValidation.warningCount > 0 ? (
+              ) : warnCount || validationIssues.length > 0 ? (
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
               ) : (
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -669,16 +573,8 @@ export const App: React.FC = () => {
                     ? t.compilingCached
                     : t.compilingFirstRun
                   : `${errorCount} ${t.errorsCount}, ${warnCount} ${t.warningsCount}${
-                      ioValidation.conflictCount > 0
-                        ? `, ${ioValidation.conflictCount} ${t.ioConflictsCount}`
-                        : ''
-                    }${
-                      ioValidation.invalidCount > 0
-                        ? `, ${ioValidation.invalidCount} ${t.ioInvalidCount}`
-                        : ''
-                    }${
-                      ioValidation.warningCount > 0
-                        ? `, ${ioValidation.warningCount} ${t.ioWarningsCount}`
+                      validationIssues.length > 0
+                        ? `, ${validationIssues.length} ${t.configIssuesCount}`
                         : ''
                     }`}
               </span>
@@ -688,7 +584,7 @@ export const App: React.FC = () => {
             </div>
             {messages.map((m, i) => (
               <div
-                key={`msg-${i}`}
+                key={i}
                 className={
                   m.severity === 'error' ? 'text-rose-300' : 'text-amber-300'
                 }
@@ -702,10 +598,13 @@ export const App: React.FC = () => {
                 {m.msg}
               </div>
             ))}
-            {ioIssuesToBanner.map((issue, idx) => (
-              <div key={`io-${issue.portName}-${idx}`} className="text-rose-300">
+            {validationIssues.map((issue, idx) => (
+              <div
+                key={`${issue.componentId}-${issue.field}-${idx}`}
+                className={issue.severity === 'error' ? 'text-rose-300' : 'text-amber-300'}
+              >
                 <AlertTriangle className="inline w-3 h-3 mr-1" />
-                [{issue.portName}] {formatValidationIssue(issue, lang, t)}
+                {issue.message}
               </div>
             ))}
           </div>
@@ -722,9 +621,9 @@ export const App: React.FC = () => {
                   t.tabBoard,
                 ],
                 [
-                  'io',
-                  <SlidersHorizontal key="i" className="w-3.5 h-3.5" />,
-                  `${t.tabIoConfig} (${ioValidation.configuredCount}/${ports.length})`,
+                  'config',
+                  <Sliders key="i" className="w-3.5 h-3.5" />,
+                  `${t.tabConfig} (${hardwareConfig.components.length})`,
                 ],
                 [
                   'code',
@@ -735,6 +634,7 @@ export const App: React.FC = () => {
             ).map(([id, icon, label]) => (
               <button
                 key={id}
+                type="button"
                 onClick={() => setActiveTab(id)}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition ${
                   activeTab === id
@@ -744,82 +644,58 @@ export const App: React.FC = () => {
               >
                 {icon}
                 {label}
-                {id === 'io' && ioErrorCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-rose-500/25 text-rose-200 border border-rose-500/45">
-                    {ioErrorCount}
-                  </span>
-                )}
-                {id === 'io' &&
-                  ioErrorCount === 0 &&
-                  ioValidation.warningCount > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500/25 text-amber-200 border border-amber-500/45">
-                      {ioValidation.warningCount}
-                    </span>
-                  )}
               </button>
             ))}
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-xl">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             <span>
-              {ports.length} {t.portsUnit} • {ioValidation.configuredCount}{' '}
-              {t.configuredUnit} • {runtimeInternals.length}{' '}
-              {t.internalSignalsUnit}
+              {ports.length} {t.portsUnit} • {runtimeInternals.length}{' '}
+              {t.internalSignalsUnit} • {hardwareConfig.components.length}{' '}
+              {t.componentsUnit}
             </span>
           </div>
         </div>
 
         {activeTab === 'board' && (
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-            <div className="xl:col-span-8">
+            <div className={activeMatrixConfig ? 'xl:col-span-8' : 'xl:col-span-12'}>
               <BoardView
                 topModule={topModule}
-                groups={controlGroups}
+                boardName={hardwareConfig.boardName}
+                components={hardwareConfig.components}
                 signals={signals}
+                validationIssues={validationIssues}
                 t={t}
                 onToggleInputBit={handleToggleInputBit}
                 onSetInputBit={handleSetInputBit}
               />
             </div>
-            <div className="xl:col-span-4">
-              <MatrixViewer
-                matrixBuffer={matrixBuffer}
-                rowSignalName={rowSigName}
-                colSignalName={colSigName}
-                rowValue={rowSigName ? signals[rowSigName] ?? 0n : 0n}
-                colValue={colSigName ? signals[colSigName] ?? 0n : 0n}
-                povEnabled={povEnabled}
-                invertColPolarity={invertColPolarity}
-                isConnected={hasMatrixPorts}
-                t={t}
-                onTogglePov={() => {
-                  const nextPov = !povEnabled;
-                  setPovEnabled(nextPov);
-                  sampleMatrix(signals, nextPov, invertColPolarity);
-                  publishMatrix();
-                }}
-                onToggleInvertCol={() => {
-                  const nextInv = !invertColPolarity;
-                  setInvertColPolarity(nextInv);
-                  sampleMatrix(signals, povEnabled, nextInv);
-                  publishMatrix();
-                }}
-                onClearBuffer={clearMatrix}
-              />
-            </div>
+            {activeMatrixConfig && (
+              <div className="xl:col-span-4">
+                <MatrixViewer
+                  config={activeMatrixConfig}
+                  matrixBuffer={matrixBuffer}
+                  rowValue={signals[activeMatrixConfig.row.signalName] ?? 0n}
+                  colValue={signals[activeMatrixConfig.col.signalName] ?? 0n}
+                  isConnected={isMatrixConnected}
+                  t={t}
+                  onUpdateConfig={handleUpdateMatrixConfig}
+                  onClearBuffer={clearMatrix}
+                />
+              </div>
+            )}
           </div>
         )}
 
-        {activeTab === 'io' && (
-          <IoConfigPanel
-            topModule={topModule}
-            validation={ioValidation}
-            lang={lang}
+        {activeTab === 'config' && (
+          <HardwareConfigPanel
+            config={hardwareConfig}
+            ports={ports}
+            validationIssues={validationIssues}
             t={t}
-            onAssignPort={handleAssignPort}
-            onAutoAssign={handleAutoAssign}
-            onResetDefaults={handleResetIoDefaults}
-            onClearAll={handleClearAllIo}
+            onChangeConfig={setHardwareConfig}
+            onRestoreDefaults={handleRestoreDefaultConfig}
           />
         )}
 
@@ -830,6 +706,7 @@ export const App: React.FC = () => {
                 {verilogFiles.map((f, i) => (
                   <button
                     key={f.name + i}
+                    type="button"
                     onClick={() => setEditIndex(i)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition ${
                       i === editIndex
@@ -866,13 +743,9 @@ export const App: React.FC = () => {
               onChange={(e) => {
                 const text = e.target.value;
                 debounceCompileRef.current = true;
-                if (/\.(v|sv|vh|svh)$/i.test(verilogFiles[editIndex]?.name ?? '')) {
-                  setRuntimePorts(null);
-                }
+                setRuntimePorts(null);
                 setVerilogFiles((files) =>
-                  files.map((f, i) =>
-                    i === editIndex ? { ...f, content: text } : f
-                  )
+                  files.map((f, i) => (i === editIndex ? { ...f, content: text } : f))
                 );
               }}
               spellCheck={false}
@@ -885,7 +758,7 @@ export const App: React.FC = () => {
           signalDefs={signalDefs}
           signals={signals}
           history={history}
-          ioValidation={ioValidation}
+          components={hardwareConfig.components}
           t={t}
         />
       </main>
