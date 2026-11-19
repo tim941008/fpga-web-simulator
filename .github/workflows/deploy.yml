@@ -2,7 +2,7 @@ name: Deploy Web FPGA Simulator to GitHub Pages
 
 on:
   push:
-    branches: ['main', 'master', 'phase-b-stabilization']
+    branches: ['main', 'master', 'phase-b-stabilization', 'phase-c1-multifile-simulator']
   pull_request:
     branches: ['main', 'master']
   workflow_dispatch:

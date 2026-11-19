@@ -1,16 +1,16 @@
 /**
- * FPGA Runtime — Verilator WebAssembly pipeline
+ * FPGA Runtime - Verilator WebAssembly pipeline
  *
- *   top.v ──► Verilator (verilator_bin.wasm, in a Web Worker)
- *               │  Verilator XML netlist (obj_dir/V<top>.xml)
- *               ▼
+ *   project files + top module --> Verilator (verilator_bin.wasm, in a Web Worker)
+ *               |  Verilator XML netlist (obj_dir/V<top>.xml)
+ *               v
  *           VerilogXMLParser (8bitworkshop)
- *               │  HDL AST
- *               ▼
- *           HDLModuleWASM (8bitworkshop + binaryen) ──► native WebAssembly model
- *               │      (falls back to HDLModuleJS if WASM codegen fails)
- *               ▼
- *           FpgaRuntime  ──► LED / HEX7SEG / Matrix16x16 (via Hardware Config Mapper)
+ *               |  HDL AST
+ *               v
+ *           HDLModuleWASM (8bitworkshop + binaryen) --> native WebAssembly model
+ *               |      (falls back to HDLModuleJS if WASM codegen fails)
+ *               v
+ *           FpgaRuntime  --> LED / HEX7SEG / Matrix16x16 (via Hardware Config Mapper)
  */
 import { PortDefinition } from '../types/fpga';
 import { VerilogXMLParser } from '../vendor/8bitworkshop/hdl/vxmlparser';
@@ -294,6 +294,13 @@ export class FpgaRuntime {
     return out;
   }
 
+  /** Read one signal without snapshotting the whole state (cheap; used for per-cycle sampling). */
+  readSignal(name: string): bigint {
+    const info = this.vars.get(name);
+    if (!info) return 0n;
+    return toBigInt(this.model.state[info.key], info.def.width);
+  }
+
   /** Drive an input port (does not evaluate; call eval() afterwards). */
   setSignal(name: string, value: bigint): void {
     const info = this.vars.get(name);
@@ -317,6 +324,32 @@ export class FpgaRuntime {
         v >>= bits;
       }
     }
+  }
+
+  /**
+   * Build a hot-loop function that advances one full clock cycle (clk 1 -> eval -> clk 0 -> eval).
+   * Clock key / model are resolved once so the per-cycle cost is two state writes + two evals
+   * (no BigInt conversion, no map lookups, no signal snapshots).
+   */
+  makeCycleStepper(clockName: string | null): () => void {
+    const model = this.model;
+    const info = clockName ? this.vars.get(clockName) : undefined;
+    if (!info) return () => model.eval();
+    const key = info.key;
+    if (typeof model.state[key] === 'number' || model.state[key] == null) {
+      return () => {
+        model.state[key] = 1;
+        model.eval();
+        model.state[key] = 0;
+        model.eval();
+      };
+    }
+    return () => {
+      this.setSignal(clockName!, 1n);
+      model.eval();
+      this.setSignal(clockName!, 0n);
+      model.eval();
+    };
   }
 
   /** Settle combinational logic (Verilator eval()). */

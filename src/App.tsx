@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   FileCode,
   FolderUp,
+  FolderOpen,
+  FileArchive,
   Layers,
   Code2,
   Sliders,
@@ -11,10 +13,12 @@ import {
   Loader2,
   Globe,
   Plus,
+  UploadCloud,
 } from 'lucide-react';
 import { parseVerilogSource } from './parsers/verilogParser';
 import { CompileMessage, FpgaRuntime } from './sim/fpgaRuntime';
 import { SAMPLE_PRESETS } from './presets/sampleDesigns';
+import { EXAMPLE_PROJECTS } from './presets/exampleProjects';
 import { PortDefinition, SignalHistoryEntry } from './types/fpga';
 import {
   ClockComponentConfig,
@@ -42,20 +46,35 @@ import { BoardView } from './components/BoardView';
 import { MatrixViewer } from './components/MatrixViewer';
 import { SignalMonitor } from './components/SignalMonitor';
 import { HardwareConfigPanel } from './components/HardwareConfigPanel';
+import { ProjectExplorer, TopModuleSelector } from './components/ProjectExplorer';
 import {
   getInitialLanguage,
   Language,
   saveLanguage,
   TRANSLATIONS,
 } from './i18n/translations';
+import {
+  addFiles,
+  createFile,
+  deleteFile,
+  findTopCandidates,
+  guessTopModule,
+  ProjectFile,
+  renameFile,
+  replaceFile,
+  scanProject,
+  validateProject,
+} from './project/projectModel';
+import { compileProject } from './project/projectCompile';
+import {
+  entriesFromDataTransfer,
+  entriesFromFiles,
+  ImportedEntry,
+} from './project/projectImport';
+import { EngineStats, RunMode, SimulationEngine } from './sim/simulationEngine';
 
-const FRAME_MS = 16; // UI refresh period while the clock runs
 const HISTORY_LEN = 64;
-
-interface SourceFile {
-  name: string;
-  content: string;
-}
+const IDLE_STATS: EngineStats = { state: 'idle', cycle: 0, cyclesPerSec: 0, elapsedMs: 0 };
 
 export const App: React.FC = () => {
   // ------------------------------------------------------------------ i18n
@@ -68,12 +87,15 @@ export const App: React.FC = () => {
     saveLanguage(next);
   };
 
-  // ------------------------------------------------------------------ sources
+  // ------------------------------------------------------------------ project (multi-file)
   const [selectedPresetId, setSelectedPresetId] = useState<string>(SAMPLE_PRESETS[0].id);
-  const [verilogFiles, setVerilogFiles] = useState<SourceFile[]>([
-    { name: SAMPLE_PRESETS[0].verilogFilename, content: SAMPLE_PRESETS[0].verilogCode },
+  const [projectFiles, setProjectFiles] = useState<ProjectFile[]>(() => [
+    createFile(SAMPLE_PRESETS[0].verilogFilename, SAMPLE_PRESETS[0].verilogCode),
   ]);
-  const [editIndex, setEditIndex] = useState(0);
+  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  /** User-chosen top module; null = auto-detect from the project */
+  const [selectedTop, setSelectedTop] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   // ------------------------------------------------ hardware configuration (persisted)
   const [hardwareConfig, setHardwareConfig] = useState<HardwareConfigSchema>(() => {
@@ -87,8 +109,9 @@ export const App: React.FC = () => {
 
   // --------------------------------------------------------------- sim state
   const [activeTab, setActiveTab] = useState<'board' | 'code' | 'config'>('board');
-  const [running, setRunning] = useState(false);
-  const [clockHz, setClockHz] = useState(30);
+  const [rateHz, setRateHz] = useState<number>(100); // Infinity = unlimited
+  const [engineStats, setEngineStats] = useState<EngineStats>(IDLE_STATS);
+  const [batchActive, setBatchActive] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
   const [clockLevel, setClockLevel] = useState<0 | 1>(0);
   const [signals, setSignals] = useState<Record<string, bigint>>({});
@@ -113,21 +136,32 @@ export const App: React.FC = () => {
   const hardwareConfigRef = useRef(hardwareConfig);
   hardwareConfigRef.current = hardwareConfig;
 
+  // ------------------------------------------------------------ project analysis
+  const scannedModules = useMemo(() => scanProject(projectFiles), [projectFiles]);
+  const topCandidates = useMemo(() => findTopCandidates(scannedModules), [scannedModules]);
+  const topModule = selectedTop ?? (guessTopModule(scannedModules) || 'top');
+  const topInvalid = !scannedModules.some((m) => m.name === topModule);
+
+  const projectDiagnostics = useMemo(
+    () => validateProject({ files: projectFiles, topModule }),
+    [projectFiles, topModule]
+  );
+
+  const activeFile = projectFiles.find((f) => f.id === activeFileId) ?? projectFiles[0] ?? null;
+
   // ------------------------------------------------------------ parsing & validation
   const verilogOnlyContents = useMemo(
     () =>
-      verilogFiles
+      projectFiles
         .filter((f) => /\.(v|sv|vh|svh)$/i.test(f.name))
         .map((f) => f.content),
-    [verilogFiles]
+    [projectFiles]
   );
 
   const verilogParsed = useMemo(
     () => parseVerilogSource(verilogOnlyContents),
     [verilogOnlyContents]
   );
-
-  const topModule = verilogParsed.topModule;
 
   // Ports reported by Verilator are authoritative; fall back to the parser before first compile
   const ports = runtimePorts ?? verilogParsed.ports;
@@ -210,22 +244,136 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMatrixConfig]);
 
+  // ---------------------------------------------------------------- simulation engine
+  // The engine owns the hot loop. React only hears about it through throttled `onFrame` calls.
+  const stepRef = useRef<() => void>(() => {});
+  const sampleRef = useRef<() => void>(() => {});
+  const frameRef = useRef<(s: EngineStats) => void>(() => {});
+  const errorRef = useRef<(e: unknown) => void>(() => {});
+  const engine = useMemo(
+    () =>
+      new SimulationEngine({
+        step: () => stepRef.current(),
+        onSample: () => sampleRef.current(),
+        onFrame: (s) => frameRef.current(s),
+        onError: (e) => errorRef.current(e),
+      }),
+    []
+  );
+
+  const pushHistory = (entries: SignalHistoryEntry[]) =>
+    setHistory((h) => [...h, ...entries].slice(-HISTORY_LEN));
+
+  // Frame boundary / batch completion: the ONLY place the run loop touches React state.
+  frameRef.current = (s: EngineStats) => {
+    const rt = runtimeRef.current;
+    setEngineStats(s);
+    if (s.state !== 'running' && s.state !== 'paused') setBatchActive(false);
+    if (!rt) return;
+    cycleRef.current = s.cycle;
+    clockLevelRef.current = 0;
+    const sig = rt.getSignals();
+    sampleMatrix(sig);
+    publishMatrix();
+    setClockLevel(0);
+    setCycleCount(s.cycle);
+    setSignals(sig);
+    pushHistory([{ cycle: s.cycle, halfCycle: 0, values: sig }]);
+  };
+
+  errorRef.current = (e: unknown) => {
+    setBatchActive(false);
+    setMessages((m) => [
+      ...m,
+      { severity: 'error', file: null, line: 0, msg: `Runtime: ${String(e)}` },
+    ]);
+  };
+
+  useEffect(() => () => engine.reset(), [engine]);
+
+  const startRun = (mode: RunMode) => {
+    const rt = runtimeRef.current;
+    if (!rt || !clkName) return;
+    if (clockLevelRef.current === 1) {
+      rt.stepEdge(clkName, 0);
+      clockLevelRef.current = 0;
+    }
+    stepRef.current = rt.makeCycleStepper(clkName);
+    // Live matrix: sample row/col only (cheap) every few cycles instead of snapshotting all signals.
+    const mc = activeMatrixConfig;
+    if (mc && mc.displayMode !== 'pattern') {
+      const rowName = mc.row.signalName;
+      const colName = mc.col.signalName;
+      sampleRef.current = () =>
+        sampleLiveMatrixIntoBuffer(
+          matrixRef.current,
+          rt.readSignal(rowName),
+          rt.readSignal(colName),
+          mc
+        );
+    } else {
+      sampleRef.current = () => {};
+    }
+    engine.reset(cycleRef.current);
+    setBatchActive(mode.kind === 'batch');
+    engine.start(mode);
+  };
+
+  const currentMode = (): RunMode =>
+    Number.isFinite(rateHz) ? { kind: 'rate', hz: rateHz } : { kind: 'unlimited' };
+
+  const handleToggleRun = () => {
+    if (engine.state === 'running') engine.pause();
+    else if (engine.state === 'paused') engine.resume();
+    else startRun(currentMode());
+  };
+
+  const handleChangeRate = (hz: number) => {
+    setRateHz(hz);
+    if (engine.state === 'running' || engine.state === 'paused') {
+      engine.setMode(Number.isFinite(hz) ? { kind: 'rate', hz } : { kind: 'unlimited' });
+    }
+  };
+
+  const handleRunBatch = (n: number) => {
+    if (engine.state === 'running' || engine.state === 'paused') return;
+    startRun({ kind: 'batch', cycles: n });
+  };
+
+  const handleStop = () => engine.stop();
+
   // ---------------------------------------------------------------- compile
   const compile = useCallback(async () => {
     const seq = ++compileSeq.current;
-    setRunning(false);
+    engine.reset();
+    setEngineStats(IDLE_STATS);
+    setBatchActive(false);
     setCompiling(true);
     setCompileInfo('');
-    const result = await FpgaRuntime.compile(verilogFiles, topModule);
+    const outcome = await compileProject({ files: projectFiles, topModule });
     if (seq !== compileSeq.current) {
-      result.runtime?.dispose();
+      outcome.result?.runtime?.dispose();
       return;
     }
     wasmCachedRef.current = true;
     setCompiling(false);
-    setMessages(result.messages);
+    setMessages(outcome.messages);
+    const result = outcome.result;
+
+    if (!result) {
+      // project validation failed: Verilator was not invoked
+      runtimeRef.current?.dispose();
+      runtimeRef.current = null;
+      setBackendMode('none');
+      setRuntimePorts(null);
+      setRuntimeInternals([]);
+      setCompileInfo('Project validation failed - fix the errors below');
+      return;
+    }
 
     if (!result.runtime) {
+      runtimeRef.current?.dispose();
+      runtimeRef.current = null;
       setBackendMode('none');
       setRuntimePorts(null);
       setRuntimeInternals([]);
@@ -240,7 +388,7 @@ export const App: React.FC = () => {
     setRuntimePorts(rt.ports);
     setRuntimeInternals(rt.internalSignals);
     setCompileInfo(
-      `Verilator ${result.timings.verilatorMs.toFixed(0)} ms + codegen ${result.timings.codegenMs.toFixed(0)} ms`
+      `${projectFiles.length} files, top ${topModule}: Verilator ${result.timings.verilatorMs.toFixed(0)} ms + codegen ${result.timings.codegenMs.toFixed(0)} ms`
     );
 
     // Apply configured initial input states (respecting Switch initialValue & KEY polarity)
@@ -268,7 +416,7 @@ export const App: React.FC = () => {
     sampleMatrix(sig, matrixCfg);
     publishMatrix();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verilogFiles, topModule]);
+  }, [projectFiles, topModule]);
 
   useEffect(() => {
     const delay = debounceCompileRef.current ? 450 : 0;
@@ -277,10 +425,7 @@ export const App: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [compile]);
 
-  // ------------------------------------------------------------- clocking
-  const pushHistory = (entries: SignalHistoryEntry[]) =>
-    setHistory((h) => [...h, ...entries].slice(-HISTORY_LEN));
-
+  // ------------------------------------------------------------- single stepping
   const stepHalfCycle = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
@@ -289,6 +434,7 @@ export const App: React.FC = () => {
     else rt.eval();
     clockLevelRef.current = next;
     if (next === 1) cycleRef.current += 1;
+    engine.setCycle(cycleRef.current);
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
@@ -298,76 +444,35 @@ export const App: React.FC = () => {
     pushHistory([{ cycle: cycleRef.current, halfCycle: next, values: sig }]);
   };
 
-  const runCycles = (n: number): SignalHistoryEntry[] => {
-    const rt = runtimeRef.current;
-    if (!rt) return [];
-    const snaps: SignalHistoryEntry[] = [];
-    for (let i = 0; i < n; i++) {
-      if (clkName) {
-        if (clockLevelRef.current === 1) rt.stepEdge(clkName, 0);
-        rt.stepEdge(clkName, 1);
-        cycleRef.current += 1;
-        const hi = rt.getSignals();
-        sampleMatrix(hi);
-        rt.stepEdge(clkName, 0);
-        clockLevelRef.current = 0;
-        const lo = rt.getSignals();
-        sampleMatrix(lo);
-        snaps.push({ cycle: cycleRef.current, halfCycle: 1, values: hi });
-        snaps.push({ cycle: cycleRef.current, halfCycle: 0, values: lo });
-      } else {
-        rt.eval();
-        cycleRef.current += 1;
-        const s = rt.getSignals();
-        sampleMatrix(s);
-        snaps.push({ cycle: cycleRef.current, halfCycle: 0, values: s });
-      }
-    }
-    return snaps;
-  };
-
   const stepFullCycle = () => {
-    const snaps = runCycles(1);
-    if (!snaps.length) return;
+    const rt = runtimeRef.current;
+    if (!rt) return;
+    if (clkName) {
+      if (clockLevelRef.current === 1) rt.stepEdge(clkName, 0);
+      rt.stepEdge(clkName, 1);
+      cycleRef.current += 1;
+      const hi = rt.getSignals();
+      sampleMatrix(hi);
+      rt.stepEdge(clkName, 0);
+    } else {
+      rt.eval();
+      cycleRef.current += 1;
+    }
+    clockLevelRef.current = 0;
+    engine.setCycle(cycleRef.current);
+    const lo = rt.getSignals();
+    sampleMatrix(lo);
     publishMatrix();
     setClockLevel(0);
     setCycleCount(cycleRef.current);
-    setSignals(snaps[snaps.length - 1].values);
-    pushHistory(snaps);
+    setSignals(lo);
+    pushHistory([{ cycle: cycleRef.current, halfCycle: 0, values: lo }]);
   };
 
-  useEffect(() => {
-    if (!running) return;
-    let carry = 0;
-    let last = performance.now();
-    const timer = window.setInterval(() => {
-      const now = performance.now();
-      carry += ((now - last) / 1000) * clockHz;
-      last = now;
-      const n = Math.min(Math.floor(carry), 20000);
-      if (n <= 0) return;
-      carry -= n;
-      try {
-        const snaps = runCycles(n);
-        if (!snaps.length) return;
-        publishMatrix();
-        setClockLevel(0);
-        setCycleCount(cycleRef.current);
-        setSignals(snaps[snaps.length - 1].values);
-        pushHistory(snaps.slice(-HISTORY_LEN));
-      } catch (e) {
-        setRunning(false);
-        setMessages((m) => [
-          ...m,
-          { severity: 'error', file: null, line: 0, msg: `Runtime: ${String(e)}` },
-        ]);
-      }
-    }, FRAME_MS);
-    return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, clockHz, clkName, sampleMatrix]);
-
   // ------------------------------------------------------------- inputs
+  const running = engineStats.state === 'running';
+  const paused = engineStats.state === 'paused';
+
   const applyInput = (signalName: string, update: (cur: bigint) => bigint) => {
     const rt = runtimeRef.current;
     if (!rt || !rt.hasSignal(signalName)) return;
@@ -395,7 +500,9 @@ export const App: React.FC = () => {
   const handleReset = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
-    setRunning(false);
+    engine.reset(0);
+    setEngineStats(IDLE_STATS);
+    setBatchActive(false);
     const initialInputs = computeInitialInputSignals(
       hardwareConfigRef.current.components,
       rt.ports
@@ -413,17 +520,73 @@ export const App: React.FC = () => {
     publishMatrix();
   };
 
-  // ------------------------------------------------------------- uploads & presets
-  const handleUploadVerilogFiles = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
-    const loaded: SourceFile[] = [];
-    for (const file of Array.from(fileList)) {
-      loaded.push({ name: file.name, content: await file.text() });
+  // ------------------------------------------------------------- project import / editing
+  const loadEntries = (entries: ImportedEntry[], mode: 'replace' | 'append') => {
+    if (entries.length === 0) {
+      setMessages([
+        {
+          severity: 'error',
+          file: null,
+          line: 0,
+          msg: 'No supported files found (.v .sv .vh .svh .hex .mem .mif .txt).',
+        },
+      ]);
+      return;
     }
     debounceCompileRef.current = false;
     setRuntimePorts(null);
-    setEditIndex(0);
-    setVerilogFiles(loaded);
+    if (mode === 'replace') {
+      setProjectFiles(entries.map((e) => createFile(e.name, e.content)));
+      setSelectedTop(null);
+      setActiveFileId(null);
+    } else {
+      setProjectFiles((prev) => addFiles(prev, entries));
+    }
+  };
+
+  const importFileList = async (list: FileList | null, mode: 'replace' | 'append') => {
+    if (!list || list.length === 0) return;
+    try {
+      loadEntries(await entriesFromFiles(Array.from(list)), mode);
+    } catch (err) {
+      setMessages([
+        {
+          severity: 'error',
+          file: null,
+          line: 0,
+          msg: err instanceof Error ? err.message : String(err),
+        },
+      ]);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    try {
+      loadEntries(await entriesFromDataTransfer(e.dataTransfer), 'replace');
+    } catch (err) {
+      setMessages([
+        {
+          severity: 'error',
+          file: null,
+          line: 0,
+          msg: err instanceof Error ? err.message : String(err),
+        },
+      ]);
+    }
+  };
+
+  const handleRename = (id: string, newName: string): string | undefined => {
+    const res = renameFile(projectFiles, id, newName);
+    if (res.error) return res.error;
+    setProjectFiles(res.files);
+    return undefined;
+  };
+
+  const handleDeleteFile = (id: string) => {
+    setProjectFiles((files) => deleteFile(files, id));
+    if (activeFileId === id) setActiveFileId(null);
   };
 
   const handleRestoreDefaultConfig = () => {
@@ -444,8 +607,30 @@ export const App: React.FC = () => {
   const warnCount = messages.length - errorCount;
   const signalDefs = [...ports, ...runtimeInternals];
 
+  const uploadBtn =
+    'flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 cursor-pointer transition';
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/30 text-slate-100 flex flex-col">
+    <div
+      className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/30 text-slate-100 flex flex-col"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragActive(false);
+      }}
+      onDrop={handleDrop}
+    >
+      {dragActive && (
+        <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-emerald-950/70 border-4 border-dashed border-emerald-400/70">
+          <div className="flex items-center gap-3 text-emerald-200 text-lg font-semibold">
+            <UploadCloud className="w-8 h-8" />
+            Drop .v / .sv files, a folder or a .zip to load the project
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="border-b border-indigo-500/25 bg-slate-900/90 backdrop-blur-md sticky top-0 z-30 shadow-lg shadow-slate-950/50">
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
@@ -480,10 +665,9 @@ export const App: React.FC = () => {
                   setSelectedPresetId(preset.id);
                   debounceCompileRef.current = false;
                   setRuntimePorts(null);
-                  setEditIndex(0);
-                  setVerilogFiles([
-                    { name: preset.verilogFilename, content: preset.verilogCode },
-                  ]);
+                  setActiveFileId(null);
+                  setSelectedTop(null);
+                  setProjectFiles([createFile(preset.verilogFilename, preset.verilogCode)]);
                   setHardwareConfig(preset.createHardwareConfig());
                 }
               }}
@@ -496,18 +680,79 @@ export const App: React.FC = () => {
               ))}
             </select>
 
-            {/* Upload .v / .hex */}
-            <label className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 cursor-pointer transition">
+            {/* Multi-file example projects */}
+            <select
+              value=""
+              onChange={(e) => {
+                const ex = EXAMPLE_PROJECTS.find((x) => x.id === e.target.value);
+                if (!ex) return;
+                debounceCompileRef.current = false;
+                setRuntimePorts(null);
+                setActiveFileId(null);
+                setProjectFiles(ex.files.map((f) => createFile(f.name, f.content)));
+                setSelectedTop(ex.topModule);
+                setHardwareConfig(ex.createHardwareConfig());
+              }}
+              className="bg-slate-950 border border-indigo-500/35 hover:border-indigo-400/60 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-400 transition"
+            >
+              <option value="">Multi-file examples...</option>
+              {EXAMPLE_PROJECTS.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                </option>
+              ))}
+            </select>
+
+            <TopModuleSelector
+              topModule={topModule}
+              modules={scannedModules}
+              topCandidates={topCandidates}
+              invalid={topInvalid}
+              onChange={setSelectedTop}
+            />
+
+            {/* Upload: multi-select / folder / ZIP (drag-and-drop works anywhere on the page) */}
+            <label className={uploadBtn} title="Select multiple .v/.sv files">
               <FileCode className="w-4 h-4 text-emerald-400" />
               <span>
-                {t.uploadVerilog} ({verilogFiles.length} {t.filesSuffix})
+                {t.uploadVerilog} ({projectFiles.length} {t.filesSuffix})
               </span>
               <input
                 type="file"
                 accept=".v,.sv,.vh,.svh,.hex,.mem,.mif,.txt,.binary"
                 multiple
                 className="hidden"
-                onChange={(e) => handleUploadVerilogFiles(e.target.files)}
+                onChange={(e) => {
+                  void importFileList(e.target.files, 'replace');
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <label className={uploadBtn} title="Upload a whole project folder">
+              <FolderOpen className="w-4 h-4 text-emerald-400" />
+              <span>Folder</span>
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                onChange={(e) => {
+                  void importFileList(e.target.files, 'replace');
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <label className={uploadBtn} title="Upload a project .zip">
+              <FileArchive className="w-4 h-4 text-emerald-400" />
+              <span>ZIP</span>
+              <input
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={(e) => {
+                  void importFileList(e.target.files, 'replace');
+                  e.target.value = '';
+                }}
               />
             </label>
 
@@ -528,7 +773,10 @@ export const App: React.FC = () => {
       <main className="max-w-[1600px] w-full mx-auto px-4 py-5 flex-1 space-y-5">
         <ClockControls
           running={running}
-          clockHz={clockHz}
+          paused={paused}
+          rateHz={rateHz}
+          stats={engineStats}
+          batchRunning={batchActive}
           cycleCount={cycleCount}
           clockLevel={clockLevel}
           clockSignalName={clkName}
@@ -536,11 +784,13 @@ export const App: React.FC = () => {
           compiling={compiling}
           t={t}
           onCompile={() => void compile()}
-          onToggleRun={() => setRunning((r) => !r)}
+          onToggleRun={handleToggleRun}
           onStepFullCycle={stepFullCycle}
           onStepHalfCycle={stepHalfCycle}
           onReset={handleReset}
-          onChangeClockHz={setClockHz}
+          onChangeRate={handleChangeRate}
+          onRunBatch={handleRunBatch}
+          onStop={handleStop}
         />
 
         {/* Compiler & Hardware Validation Banner */}
@@ -594,7 +844,7 @@ export const App: React.FC = () => {
                 ) : (
                   <AlertTriangle className="inline w-3 h-3 mr-1" />
                 )}
-                {m.file ? `${m.file}:${m.line}: ` : ''}
+                {m.file ? `${m.file}${m.line ? `:${m.line}` : ''}: ` : ''}
                 {m.msg}
               </div>
             ))}
@@ -628,7 +878,7 @@ export const App: React.FC = () => {
                 [
                   'code',
                   <Code2 key="i" className="w-3.5 h-3.5" />,
-                  t.tabCode,
+                  `${t.tabCode} (${projectFiles.length})`,
                 ],
               ] as const
             ).map(([id, icon, label]) => (
@@ -700,57 +950,68 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'code' && (
-          <div className="bg-slate-900/95 border border-emerald-500/25 rounded-2xl p-4 space-y-3 shadow-xl">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {verilogFiles.map((f, i) => (
-                  <button
-                    key={f.name + i}
-                    type="button"
-                    onClick={() => setEditIndex(i)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border transition ${
-                      i === editIndex
-                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {f.name}
-                  </button>
-                ))}
-                {!verilogFiles.some((f) => f.name === 'rom_init.hex') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setVerilogFiles((prev) => [
-                        ...prev,
-                        { name: 'rom_init.hex', content: 'A5\n5A\nF0\n0F\n' },
-                      ]);
-                      setEditIndex(verilogFiles.length);
-                    }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-violet-200 transition"
-                  >
-                    <Plus className="w-3 h-3" />
-                    {t.addMemFileBtn}
-                  </button>
-                )}
+          <div className="bg-slate-900/95 border border-emerald-500/25 rounded-2xl p-4 shadow-xl">
+            <div className="flex flex-col lg:flex-row gap-4">
+              <ProjectExplorer
+                files={projectFiles}
+                modules={scannedModules}
+                diagnostics={projectDiagnostics}
+                activeFileId={activeFile?.id ?? null}
+                topModule={topModule}
+                topCandidates={topCandidates}
+                onSelectFile={setActiveFileId}
+                onRename={handleRename}
+                onDelete={handleDeleteFile}
+                onReplace={(id, content) => {
+                  debounceCompileRef.current = false;
+                  setRuntimePorts(null);
+                  setProjectFiles((files) => replaceFile(files, id, content));
+                }}
+                onAddFiles={(l) => void importFileList(l, 'append')}
+                onAddFolder={(l) => void importFileList(l, 'append')}
+                onAddZip={(l) => void importFileList(l, 'append')}
+                onChangeTop={setSelectedTop}
+              />
+              <div className="flex-1 min-w-0 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border bg-emerald-500/20 border-emerald-400/50 text-emerald-200">
+                      {activeFile?.name ?? '(no file)'}
+                    </span>
+                    {!projectFiles.some((f) => f.name === 'rom_init.hex') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const f = createFile('rom_init.hex', 'A5\n5A\nF0\n0F\n');
+                          setProjectFiles((prev) => [...prev, f]);
+                          setActiveFileId(f.id);
+                        }}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-violet-200 transition"
+                      >
+                        <Plus className="w-3 h-3" />
+                        {t.addMemFileBtn}
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-xs text-slate-400">
+                    {t.editorAutoCompileNote}
+                  </span>
+                </div>
+                <textarea
+                  value={activeFile?.content ?? ''}
+                  disabled={!activeFile}
+                  onChange={(e) => {
+                    if (!activeFile) return;
+                    const text = e.target.value;
+                    debounceCompileRef.current = true;
+                    setRuntimePorts(null);
+                    setProjectFiles((files) => replaceFile(files, activeFile.id, text));
+                  }}
+                  spellCheck={false}
+                  className="w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
               </div>
-              <span className="text-xs text-slate-400">
-                {t.editorAutoCompileNote}
-              </span>
             </div>
-            <textarea
-              value={verilogFiles[editIndex]?.content ?? ''}
-              onChange={(e) => {
-                const text = e.target.value;
-                debounceCompileRef.current = true;
-                setRuntimePorts(null);
-                setVerilogFiles((files) =>
-                  files.map((f, i) => (i === editIndex ? { ...f, content: text } : f))
-                );
-              }}
-              spellCheck={false}
-              className="w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
-            />
           </div>
         )}
 
