@@ -7,13 +7,15 @@ import {
   makeProject,
   renameFile,
   replaceFile,
+  scanPackageImports,
+  scanPackages,
   scanProject,
   validateProject,
   hasErrors,
   createFile,
   VerilogProject,
 } from '../projectModel';
-import { compileProject, Compiler } from '../projectCompile';
+import { compileProject, Compiler, selectFilesForTop } from '../projectCompile';
 import {
   entriesFromFiles,
   filterEntries,
@@ -369,4 +371,186 @@ describe('example projects', () => {
       expect(validateProject(p)).toEqual([]);
     });
   }
+});
+
+describe('SystemVerilog package / import scanning and dependency ordering', () => {
+  const fakeResult = (): CompileResult => ({
+    runtime: null,
+    messages: [],
+    log: [],
+    timings: { verilatorMs: 0, codegenMs: 0 },
+  });
+
+  it('scans package declarations and imports while ignoring comments and strings', () => {
+    const src = `
+      // package fake_line;
+      /* package fake_block; import ignored_pkg::*; */
+      localparam string S = "package fake_str; import str_pkg::*;";
+      package alpha_pkg;
+        localparam int X = 1;
+      endpackage
+      package automatic beta_pkg;
+        import alpha_pkg::*;
+        localparam int Y = alpha_pkg::X + gamma_pkg::Z;
+      endpackage
+      import delta_pkg::FOO, eps_pkg::*;
+    `;
+    expect(scanPackages(src)).toEqual(['alpha_pkg', 'beta_pkg']);
+    expect(scanPackageImports(src)).toEqual(['alpha_pkg', 'delta_pkg', 'eps_pkg', 'gamma_pkg']);
+  });
+
+  it('orders single package provider before importing module files (alphabetical upload)', async () => {
+    const project = makeProject(
+      [
+        { name: 'game.sv', content: 'import game_config::*;\nmodule game(input clk); game_display d(.clk(clk)); endmodule' },
+        { name: 'game_config.sv', content: 'package game_config;\n  localparam logic P1 = 1\'b0;\nendpackage' },
+        { name: 'game_display.sv', content: 'import game_config::*;\nmodule game_display(input clk); endmodule' },
+        { name: 'game_logic.sv', content: 'import game_config::*;\nmodule game_logic; endmodule' },
+      ],
+      'game'
+    );
+    let dispatched: string[] = [];
+    const out = await compileProject(project, async (files) => {
+      dispatched = files.map((f) => f.name);
+      return fakeResult();
+    });
+    expect(out.diagnostics).toEqual([]);
+    expect(dispatched).toEqual(['game_config.sv', 'game.sv', 'game_display.sv', 'game_logic.sv']);
+  });
+
+  it('orders multiple independent packages before modules deterministically', () => {
+    const project = makeProject(
+      [
+        { name: 'top.sv', content: 'import pkg_a::*; import pkg_b::*;\nmodule top; endmodule' },
+        { name: 'pkg_b.sv', content: 'package pkg_b; localparam int B = 2; endpackage' },
+        { name: 'pkg_a.sv', content: 'package pkg_a; localparam int A = 1; endpackage' },
+      ],
+      'top'
+    );
+    expect(selectFilesForTop(project).map((f) => f.name)).toEqual([
+      'pkg_b.sv',
+      'pkg_a.sv',
+      'top.sv',
+    ]);
+  });
+
+  it('topologically sorts chained package imports regardless of upload order', () => {
+    const project = makeProject(
+      [
+        { name: 'top.sv', content: 'import pkg_c::*;\nmodule top; endmodule' },
+        { name: 'pkg_c.sv', content: 'package pkg_c; import pkg_b::*; endpackage' },
+        { name: 'pkg_b.sv', content: 'package pkg_b; import pkg_a::*; endpackage' },
+        { name: 'pkg_a.sv', content: 'package pkg_a; localparam int BASE = 1; endpackage' },
+      ],
+      'top'
+    );
+    expect(selectFilesForTop(project).map((f) => f.name)).toEqual([
+      'pkg_a.sv',
+      'pkg_b.sv',
+      'pkg_c.sv',
+      'top.sv',
+    ]);
+  });
+
+  it('supports multiple packages declared in one source file', () => {
+    const project = makeProject(
+      [
+        { name: 'top.sv', content: 'import p2::*;\nmodule top; endmodule' },
+        { name: 'user.sv', content: 'import p1::*;\nmodule user; endmodule' },
+        {
+          name: 'all_pkgs.sv',
+          content: 'package p1; localparam int A = 1; endpackage\npackage p2; import p1::*; localparam int B = A; endpackage',
+        },
+      ],
+      'top'
+    );
+    expect(validateProject(project)).toEqual([]);
+    expect(selectFilesForTop(project).map((f) => f.name)).toEqual([
+      'all_pkgs.sv',
+      'top.sv',
+      'user.sv',
+    ]);
+  });
+
+  it('never excludes a mixed package+ancestor-module file when compiling a submodule as top', () => {
+    const project = makeProject(
+      [
+        {
+          name: 'parent_and_pkg.sv',
+          content:
+            'package shared_pkg; localparam int W = 8; endpackage\nmodule parent; child u_c(); endmodule',
+        },
+        {
+          name: 'child.sv',
+          content: 'import shared_pkg::*;\nmodule child; endmodule',
+        },
+      ],
+      'child'
+    );
+    expect(selectFilesForTop(project).map((f) => f.name)).toEqual([
+      'parent_and_pkg.sv',
+      'child.sv',
+    ]);
+  });
+
+  it('warns on missing package imports without blocking compilation or corrupting order', async () => {
+    const project = makeProject(
+      [
+        { name: 'top.sv', content: 'import nonexistent_pkg::*;\nmodule top; helper u_h(); endmodule' },
+        { name: 'helper.sv', content: 'module helper; endmodule' },
+      ],
+      'top'
+    );
+    let dispatched: string[] = [];
+    const out = await compileProject(project, async (files) => {
+      dispatched = files.map((f) => f.name);
+      return fakeResult();
+    });
+    expect(hasErrors(out.diagnostics)).toBe(false);
+    expect(out.diagnostics.some((d) => d.code === 'MISSING_PACKAGE' && d.severity === 'warning')).toBe(
+      true
+    );
+    expect(dispatched).toEqual(['top.sv', 'helper.sv']);
+  });
+
+  it('handles cyclic package dependencies gracefully with a clear diagnostic and no dropped files', async () => {
+    const project = makeProject(
+      [
+        { name: 'top.sv', content: 'import pkg_a::*;\nmodule top; endmodule' },
+        { name: 'pkg_a.sv', content: 'package pkg_a; import pkg_b::*; endpackage' },
+        { name: 'pkg_b.sv', content: 'package pkg_b; import pkg_a::*; endpackage' },
+      ],
+      'top'
+    );
+    let dispatched: string[] = [];
+    const out = await compileProject(project, async (files) => {
+      dispatched = files.map((f) => f.name);
+      return fakeResult();
+    });
+    expect(hasErrors(out.diagnostics)).toBe(false);
+    expect(
+      out.diagnostics.some((d) => d.code === 'CIRCULAR_PACKAGE' && d.severity === 'warning')
+    ).toBe(true);
+    expect(dispatched).toHaveLength(3);
+    expect(dispatched.slice(0, 2)).toEqual(['pkg_a.sv', 'pkg_b.sv']);
+    expect(dispatched[2]).toBe('top.sv');
+  });
+
+  it('preserves exact file ordering for existing Verilog projects without packages', () => {
+    const project = makeProject(
+      [
+        { name: 'top.v', content: TOP3 },
+        { name: 'counter.v', content: COUNTER },
+        { name: 'sub/decoder.v', content: DECODER },
+        { name: 'defines.vh', content: '`define X 1' },
+      ],
+      'top'
+    );
+    expect(selectFilesForTop(project).map((f) => f.name)).toEqual([
+      'top.v',
+      'counter.v',
+      'sub/decoder.v',
+      'defines.vh',
+    ]);
+  });
 });

@@ -5,7 +5,7 @@
 import { EmuHalt } from "../emu";
 import { getHDLHost } from "./hdlhost";
 import { byteArrayToString, safe_extend } from "../util";
-import { HDLBinop, HDLBlock, HDLConstant, HDLDataType, HDLExpr, HDLExtendop, HDLFuncCall, HDLModuleDef, HDLModuleRunner, HDLSourceLocation, HDLTriop, HDLUnop, HDLValue, HDLVariableDef, HDLVarRef, isArrayItem, isArrayType, isBigConstExpr, isBinop, isBlock, isConstExpr, isFuncCall, isLogicType, isTriop, isUnop, isVarDecl, isVarRef, isWhileop } from "./hdltypes";
+import { getLogicBitWidth, HDLBinop, HDLBlock, HDLConstant, HDLDataType, HDLExpr, HDLExtendop, HDLFuncCall, HDLModuleDef, HDLModuleRunner, HDLSourceLocation, HDLTriop, HDLUnop, HDLValue, HDLVariableDef, HDLVarRef, isArrayItem, isArrayType, isBigConstExpr, isBinop, isBlock, isConstExpr, isFuncCall, isLogicType, isTriop, isUnop, isVarDecl, isVarRef, isWhileop } from "./hdltypes";
 
 interface VerilatorUnit {
     _ctor_var_reset(state) : void;
@@ -176,20 +176,20 @@ export class HDLModuleJS implements HDLModuleRunner {
 
     defaultValue(dt: HDLDataType, vardef?: HDLVariableDef) : HDLValue {
         if (isLogicType(dt)) {
-            if (dt.left <= 31)
+            if (getLogicBitWidth(dt) <= 32)
                 return 0;
             else
                 return BigInt(0);
         } else if (isArrayType(dt) && typeof dt.high.cvalue === 'number' && typeof dt.low.cvalue === 'number') {
             let arr;
-            let arrlen = dt.high.cvalue - dt.low.cvalue + 1;
-            if (arrlen < 0) arrlen = -arrlen; // TODO?
+            let arrlen = Math.abs(dt.high.cvalue - dt.low.cvalue) + 1;
             if (isLogicType(dt.subtype)) {
-                if (dt.subtype.left <= 7)
+                const subWidth = getLogicBitWidth(dt.subtype);
+                if (subWidth <= 8)
                     arr = new Uint8Array(arrlen);
-                else if (dt.subtype.left <= 15)
+                else if (subWidth <= 16)
                     arr = new Uint16Array(arrlen);
-                else if (dt.subtype.left <= 31)
+                else if (subWidth <= 32)
                     arr = new Uint32Array(arrlen);
                 else {
                     arr = []; // TODO?
@@ -249,7 +249,7 @@ export class HDLModuleJS implements HDLModuleRunner {
             } else if (e.initValue != null) {
                 // TODO?
                 throw new HDLError(e, `can't init array here`);
-            } else if (isLogicType(e.dtype) && e.dtype.left > 31) {
+            } else if (isLogicType(e.dtype) && getLogicBitWidth(e.dtype) > 32) {
                 // TODO: hack for big ints ($readmem)
                 s += ` = []`;
             }
@@ -353,7 +353,7 @@ export class HDLModuleJS implements HDLModuleRunner {
             if (this.curconsts[e.refname] != null) {
                 return `${e.refname}`;
             } else if (isLogicType(e.dtype)) {
-                if (e.dtype.left <= 31)
+                if (getLogicBitWidth(e.dtype) <= 32)
                     return `${this.expr2js(e)} = 0`;
                 else
                     return `${this.expr2js(e)} = BigInt(0)`;
