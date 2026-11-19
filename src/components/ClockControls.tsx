@@ -2,6 +2,7 @@ import React from 'react';
 import { Play, Pause, StepForward, RotateCcw, Cpu, Activity, Hammer, Loader2, Square, Zap } from 'lucide-react';
 import { BATCH_SIZES, EngineStats, formatCount, formatElapsed, RATE_PRESETS_HZ } from '../sim/simulationEngine';
 import { TranslationDict } from '../i18n/translations';
+import { UiTheme } from '../config/uiPreferences';
 
 export type BackendMode = 'verilator-wasm' | 'verilator-js' | 'none';
 
@@ -18,6 +19,7 @@ interface ClockControlsProps {
   backendMode: BackendMode;
   compiling: boolean;
   t: TranslationDict;
+  theme?: UiTheme;
   onCompile: () => void;
   onToggleRun: () => void;
   onStepFullCycle: () => void;
@@ -40,6 +42,7 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
   backendMode,
   compiling,
   t,
+  theme = 'warm-lab',
   onCompile,
   onToggleRun,
   onStepFullCycle,
@@ -51,20 +54,41 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
 }) => {
   const ready = backendMode !== 'none' && !compiling;
   const hasClock = clockSignalName !== null;
+  const isWarm = theme === 'warm-lab';
 
   return (
-    <div className="bg-slate-900/95 border border-indigo-500/25 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-xl shadow-indigo-950/20">
+    <div
+      className={`bg-slate-900/95 border rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 shadow-xl ${
+        isWarm
+          ? 'border-amber-500/30 shadow-amber-950/15'
+          : 'border-indigo-500/25 shadow-indigo-950/20'
+      }`}
+    >
       {/* Left: Engine & Clock Status */}
       <div className="flex flex-wrap items-center gap-3.5">
-        <div className="flex items-center gap-2.5 bg-slate-950/90 border border-emerald-500/30 px-3.5 py-2 rounded-xl shadow-inner">
-          <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-            <Cpu className="w-4 h-4 text-emerald-400" />
+        <div
+          className={`flex items-center gap-2.5 bg-slate-950/90 border px-3.5 py-2 rounded-xl shadow-inner ${
+            isWarm ? 'border-amber-500/35' : 'border-emerald-500/30'
+          }`}
+        >
+          <div
+            className={`w-7 h-7 rounded-lg border flex items-center justify-center ${
+              isWarm
+                ? 'bg-amber-500/15 border-amber-500/35'
+                : 'bg-emerald-500/15 border-emerald-500/30'
+            }`}
+          >
+            <Cpu className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
               {t.simBackend}
             </div>
-            <div className="text-xs font-mono text-emerald-300 font-semibold">
+            <div
+              className={`text-xs font-mono font-semibold ${
+                isWarm ? 'text-amber-300' : 'text-emerald-300'
+              }`}
+            >
               {compiling
                 ? t.backendCompiling
                 : backendMode === 'verilator-wasm'
@@ -76,7 +100,11 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 bg-slate-950/90 border border-cyan-500/25 px-3.5 py-2 rounded-xl shadow-inner">
+        <div
+          className={`flex items-center gap-3 bg-slate-950/90 border px-3.5 py-2 rounded-xl shadow-inner ${
+            isWarm ? 'border-orange-500/30' : 'border-cyan-500/25'
+          }`}
+        >
           <div
             className={`w-7 h-7 rounded-lg border flex items-center justify-center transition ${
               clockLevel === 1
@@ -86,14 +114,18 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
           >
             <Activity
               className={`w-4 h-4 ${
-                clockLevel === 1 ? 'text-amber-400' : 'text-cyan-400'
+                clockLevel === 1
+                  ? 'text-amber-400'
+                  : isWarm
+                  ? 'text-orange-300'
+                  : 'text-cyan-400'
               }`}
             />
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
               {t.clockLabel} (
-              <span className="text-cyan-300 font-mono">
+              <span className={`font-mono ${isWarm ? 'text-amber-300' : 'text-cyan-300'}`}>
                 {clockSignalName ?? t.clockCombinational}
               </span>
               )
@@ -102,7 +134,9 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
               <span
                 className={`inline-block w-2 h-2 rounded-full ${
                   clockLevel === 1
-                    ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
+                    ? isWarm
+                      ? 'bg-amber-400 shadow-[0_0_8px_#fbbf24]'
+                      : 'bg-emerald-400 shadow-[0_0_8px_#34d399]'
                     : 'bg-slate-600'
                 }`}
               />
@@ -110,7 +144,7 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
                 {clockLevel === 1 ? t.clockHigh : t.clockLow}
               </span>
               <span className="text-slate-600">|</span>
-              <span className="text-cyan-300 font-semibold">
+              <span className={`font-semibold ${isWarm ? 'text-amber-300' : 'text-cyan-300'}`}>
                 {t.cycleLabel} #{cycleCount}
               </span>
             </div>
@@ -124,12 +158,16 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
           onClick={onCompile}
           disabled={compiling}
           title={t.compileTooltip}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-violet-500/20 hover:bg-violet-500/30 disabled:opacity-50 text-violet-200 border border-violet-500/40 transition shadow-sm"
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold disabled:opacity-50 border transition shadow-sm ${
+            isWarm
+              ? 'bg-orange-500/20 hover:bg-orange-500/30 text-orange-200 border-orange-500/45'
+              : 'bg-violet-500/20 hover:bg-violet-500/30 text-violet-200 border-violet-500/40'
+          }`}
         >
           {compiling ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-300" />
+            <Loader2 className={`w-3.5 h-3.5 animate-spin ${isWarm ? 'text-orange-300' : 'text-violet-300'}`} />
           ) : (
-            <Hammer className="w-3.5 h-3.5 text-violet-300" />
+            <Hammer className={`w-3.5 h-3.5 ${isWarm ? 'text-orange-300' : 'text-violet-300'}`} />
           )}
           {t.compileBtn}
         </button>
@@ -139,7 +177,9 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
           disabled={!ready || !hasClock}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition disabled:opacity-40 shadow-sm ${
             running
-              ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50 hover:bg-amber-500/35'
+              ? 'bg-orange-500/25 text-orange-200 border border-orange-400/50 hover:bg-orange-500/35'
+              : isWarm
+              ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
               : 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
           }`}
         >
@@ -170,9 +210,13 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
           onClick={onStepFullCycle}
           disabled={running || !ready || !hasClock}
           title={t.stepCycleTooltip}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-cyan-500/15 hover:bg-cyan-500/25 disabled:opacity-40 text-cyan-200 border border-cyan-500/35 transition"
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold disabled:opacity-40 border transition ${
+            isWarm
+              ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border-amber-500/40'
+              : 'bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border-cyan-500/35'
+          }`}
         >
-          <StepForward className="w-3.5 h-3.5 text-cyan-300" />
+          <StepForward className={`w-3.5 h-3.5 ${isWarm ? 'text-amber-300' : 'text-cyan-300'}`} />
           {t.stepCycle}
         </button>
 
@@ -204,7 +248,9 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
             disabled={!hasClock}
             value={Number.isFinite(rateHz) ? String(rateHz) : 'max'}
             onChange={(e) => onChangeRate(e.target.value === 'max' ? Infinity : Number(e.target.value))}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono text-emerald-300 disabled:opacity-40"
+            className={`bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono disabled:opacity-40 ${
+              isWarm ? 'text-amber-300' : 'text-emerald-300'
+            }`}
           >
             {RATE_PRESETS_HZ.map((hz) => (
               <option key={hz} value={hz}>
@@ -222,7 +268,11 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
               disabled={!ready || !hasClock || running || batchRunning}
               onClick={() => onRunBatch(n)}
               title={`Run ${formatCount(n)} cycles, update outputs when done`}
-              className="px-1.5 py-1 rounded-md text-[10px] font-mono bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-slate-200 border border-slate-700"
+              className={`px-1.5 py-1 rounded-md text-[10px] font-mono bg-slate-900 disabled:opacity-40 text-slate-200 border ${
+                isWarm
+                  ? 'border-slate-700 hover:border-amber-500/50 hover:text-amber-200'
+                  : 'border-slate-700 hover:bg-slate-800'
+              }`}
             >
               {n >= 1000 ? `${n / 1000}k` : n}
             </button>
@@ -230,15 +280,15 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] font-mono text-slate-300">
           <span>
-            Cycle: <b className="text-cyan-300">{formatCount(stats.cycle)}</b>
+            Cycle: <b className={isWarm ? 'text-amber-300' : 'text-cyan-300'}>{formatCount(stats.cycle)}</b>
           </span>
           <span>
-            Speed: <b className="text-emerald-300">{formatCount(stats.cyclesPerSec)}</b> cycles/sec
+            Speed: <b className={isWarm ? 'text-orange-300' : 'text-emerald-300'}>{formatCount(stats.cyclesPerSec)}</b> cycles/sec
           </span>
           <span>
             Elapsed: <b className="text-slate-100">{formatElapsed(stats.elapsedMs)}</b>
           </span>
-          <span className="text-slate-500">{stats.state}</span>
+          <span className="text-slate-400">{stats.state}</span>
         </div>
       </div>
     </div>
