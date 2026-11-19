@@ -71,14 +71,26 @@ function compile(req) {
 
     var FS = mod.FS;
     var paths = [];
+    var incDirs = {};
     req.files.forEach(function (f) {
-      var safe = f.name.replace(/[^A-Za-z0-9_.-]/g, '_');
+      // keep the folder structure (multi-file projects); sanitize every path segment
+      var segs = f.name.replace(/\\/g, '/').split('/').filter(function (s) { return s && s !== '.' && s !== '..'; })
+        .map(function (s) { return s.replace(/[^A-Za-z0-9_.-]/g, '_'); });
+      if (!segs.length) return;
+      var dir = '';
+      for (var i = 0; i < segs.length - 1; i++) {
+        dir = dir ? dir + '/' + segs[i] : segs[i];
+        try { FS.mkdir(dir); } catch (e) { /* exists */ }
+      }
+      var safe = segs.join('/');
       FS.writeFile(safe, f.content);
+      if (dir) incDirs[dir] = true;
       if (/\.(v|sv)$/i.test(safe)) paths.push(safe);
     });
 
     var top = req.top;
-    var args = [
+    var incArgs = ['-I.'].concat(Object.keys(incDirs).map(function (d) { return '-I' + d; }));
+    var args = incArgs.concat([
       '--cc', '-O3',
       '-Wall', '-Wno-fatal',
       '-Wno-DECLFILENAME', '-Wno-UNUSED', '-Wno-EOFNEWLINE', '-Wno-PROCASSWIRE',
@@ -86,7 +98,7 @@ function compile(req) {
       '--x-assign', 'fast', '--noassert', '--pins-sc-biguint',
       '--debug-check', // makes this Verilator build emit obj_dir/V<top>.xml
       '--top-module', top,
-    ].concat(paths);
+    ]).concat(paths);
 
     try {
       (mod.callMain || mod.run)(args);
