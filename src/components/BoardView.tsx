@@ -16,6 +16,7 @@ import {
 import { SevenSegmentDisplay } from './SevenSegmentDisplay';
 import { Cpu, Sliders, Radio, ToggleLeft, AlertTriangle } from 'lucide-react';
 import { TranslationDict } from '../i18n/translations';
+import { UiTheme } from '../config/uiPreferences';
 
 interface BoardViewProps {
   topModule: string;
@@ -24,6 +25,7 @@ interface BoardViewProps {
   signals: Record<string, bigint>;
   validationIssues: ComponentValidationIssue[];
   t: TranslationDict;
+  theme?: UiTheme;
   onToggleInputBit: (signalName: string, bitIndex: number) => void;
   onSetInputBit: (signalName: string, bitIndex: number, bitVal: 0 | 1) => void;
 }
@@ -43,9 +45,11 @@ export const BoardView: React.FC<BoardViewProps> = ({
   signals,
   validationIssues,
   t,
+  theme = 'warm-lab',
   onToggleInputBit,
   onSetInputBit,
 }) => {
+  const isWarm = theme === 'warm-lab';
   const enabled = components.filter((c) => c.enabled);
   const hexComps = enabled.filter(
     (c): c is SevenSegmentComponentConfig => c.type === 'SEVEN_SEGMENT'
@@ -68,7 +72,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
   }
 
   return (
-    <div className="bg-gradient-to-br from-emerald-950/60 via-slate-900 to-indigo-950/40 border-2 border-emerald-600/40 rounded-2xl p-5 shadow-2xl relative overflow-hidden">
+    <div
+      className={`border-2 rounded-2xl p-5 shadow-2xl relative overflow-hidden ${
+        isWarm
+          ? 'bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/25 border-amber-500/35'
+          : 'bg-gradient-to-br from-emerald-950/60 via-slate-900 to-indigo-950/40 border-emerald-600/40'
+      }`}
+    >
       {/* PCB Corner Mounting Holes */}
       <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute top-3 left-3 shadow-inner" />
       <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute top-3 right-3 shadow-inner" />
@@ -76,18 +86,32 @@ export const BoardView: React.FC<BoardViewProps> = ({
       <div className="w-3.5 h-3.5 rounded-full bg-slate-950 border-2 border-amber-400/70 absolute bottom-3 right-3 shadow-inner" />
 
       {/* Board Header Silkscreen */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-emerald-700/40 px-2">
+      <div
+        className={`flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b px-2 ${
+          isWarm ? 'border-amber-500/25' : 'border-emerald-700/40'
+        }`}
+      >
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-slate-950 border border-emerald-500/40 flex items-center justify-center shadow-inner">
-            <Cpu className="w-6 h-6 text-emerald-400" />
+          <div
+            className={`w-10 h-10 rounded-xl bg-slate-950 border flex items-center justify-center shadow-inner ${
+              isWarm ? 'border-amber-500/40' : 'border-emerald-500/40'
+            }`}
+          >
+            <Cpu className={`w-6 h-6 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
           </div>
           <div>
-            <div className="text-xs font-mono uppercase tracking-widest text-emerald-400 font-bold">
+            <div
+              className={`text-xs font-mono uppercase tracking-widest font-bold ${
+                isWarm ? 'text-amber-400' : 'text-emerald-400'
+              }`}
+            >
               {boardName || t.boardSubtitle}
             </div>
             <div className="text-sm font-semibold text-slate-100">
               {t.topEntityLabel}{' '}
-              <span className="font-mono text-cyan-300">{topModule}</span>
+              <span className={`font-mono ${isWarm ? 'text-amber-200' : 'text-cyan-300'}`}>
+                {topModule}
+              </span>
             </div>
           </div>
         </div>

@@ -14,6 +14,7 @@ import {
   Globe,
   Plus,
   UploadCloud,
+  Palette,
 } from 'lucide-react';
 import { parseVerilogSource } from './parsers/verilogParser';
 import { CompileMessage, FpgaRuntime } from './sim/fpgaRuntime';
@@ -41,6 +42,7 @@ import {
   resetHardwareConfig,
   saveHardwareConfig,
 } from './config/configPersistence';
+import { loadUiTheme, saveUiTheme, UiTheme } from './config/uiPreferences';
 import { BackendMode, ClockControls } from './components/ClockControls';
 import { BoardView } from './components/BoardView';
 import { MatrixViewer } from './components/MatrixViewer';
@@ -85,6 +87,16 @@ export const App: React.FC = () => {
     const next: Language = lang === 'en' ? 'zh-TW' : 'en';
     setLang(next);
     saveLanguage(next);
+  };
+
+  // ------------------------------------------------------------------ UI theme
+  const [uiTheme, setUiTheme] = useState<UiTheme>(loadUiTheme);
+  const isWarm = uiTheme === 'warm-lab';
+
+  const handleToggleTheme = () => {
+    const next: UiTheme = uiTheme === 'warm-lab' ? 'classic' : 'warm-lab';
+    setUiTheme(next);
+    saveUiTheme(next);
   };
 
   // ------------------------------------------------------------------ project (multi-file)
@@ -607,12 +619,17 @@ export const App: React.FC = () => {
   const warnCount = messages.length - errorCount;
   const signalDefs = [...ports, ...runtimeInternals];
 
-  const uploadBtn =
-    'flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 cursor-pointer transition';
+  const uploadBtn = isWarm
+    ? 'flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-amber-500/40 cursor-pointer transition'
+    : 'flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 cursor-pointer transition';
 
   return (
     <div
-      className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/30 text-slate-100 flex flex-col"
+      className={`min-h-screen text-slate-100 flex flex-col ${
+        isWarm
+          ? 'bg-gradient-to-b from-slate-950 via-slate-950 to-amber-950/20'
+          : 'bg-gradient-to-b from-slate-950 via-slate-950 to-indigo-950/30'
+      }`}
       onDragOver={(e) => {
         e.preventDefault();
         setDragActive(true);
@@ -623,8 +640,18 @@ export const App: React.FC = () => {
       onDrop={handleDrop}
     >
       {dragActive && (
-        <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-emerald-950/70 border-4 border-dashed border-emerald-400/70">
-          <div className="flex items-center gap-3 text-emerald-200 text-lg font-semibold">
+        <div
+          className={`fixed inset-0 z-50 pointer-events-none flex items-center justify-center border-4 border-dashed ${
+            isWarm
+              ? 'bg-amber-950/70 border-amber-400/70'
+              : 'bg-emerald-950/70 border-emerald-400/70'
+          }`}
+        >
+          <div
+            className={`flex items-center gap-3 text-lg font-semibold ${
+              isWarm ? 'text-amber-200' : 'text-emerald-200'
+            }`}
+          >
             <UploadCloud className="w-8 h-8" />
             Drop .v / .sv files, a folder or a .zip to load the project
           </div>
@@ -632,22 +659,51 @@ export const App: React.FC = () => {
       )}
 
       {/* Header */}
-      <header className="border-b border-indigo-500/25 bg-slate-900/90 backdrop-blur-md sticky top-0 z-30 shadow-lg shadow-slate-950/50">
+      <header
+        className={`border-b bg-slate-900/95 backdrop-blur-md sticky top-0 z-30 shadow-lg shadow-slate-950/50 ${
+          isWarm ? 'border-amber-500/30' : 'border-indigo-500/25'
+        }`}
+      >
         <div className="max-w-[1600px] mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/25 to-cyan-500/20 border border-emerald-400/40 flex items-center justify-center shadow-inner">
-              <Layers className="w-5 h-5 text-emerald-400" />
+            <div
+              className={`w-10 h-10 rounded-xl border flex items-center justify-center shadow-inner ${
+                isWarm
+                  ? 'bg-gradient-to-br from-amber-500/25 to-orange-500/20 border-amber-400/45'
+                  : 'bg-gradient-to-br from-emerald-500/25 to-cyan-500/20 border-emerald-400/40'
+              }`}
+            >
+              <Layers className={`w-5 h-5 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
             </div>
             <div>
               <h1 className="text-base font-bold tracking-tight text-white flex flex-wrap items-center gap-2">
                 {t.appTitle}
-                <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/35">
+                <span
+                  className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full border ${
+                    isWarm
+                      ? 'bg-amber-500/20 text-amber-200 border-amber-500/40'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/35'
+                  }`}
+                >
                   {t.appBadge}
+                </span>
+                <span
+                  className={`hidden sm:inline-block text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-md border ${
+                    isWarm
+                      ? 'bg-orange-500/15 text-orange-200 border-orange-500/35'
+                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  Digital Logic Workbench
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
                 {t.topModuleLabel}{' '}
-                <span className="font-mono text-cyan-300 font-semibold">
+                <span
+                  className={`font-mono font-semibold ${
+                    isWarm ? 'text-amber-300' : 'text-cyan-300'
+                  }`}
+                >
                   {topModule}
                 </span>{' '}
                 — {t.topSubtitle}
@@ -671,7 +727,11 @@ export const App: React.FC = () => {
                   setHardwareConfig(preset.createHardwareConfig());
                 }
               }}
-              className="bg-slate-950 border border-indigo-500/35 hover:border-indigo-400/60 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-400 transition"
+              className={`bg-slate-950 border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none transition ${
+                isWarm
+                  ? 'border-amber-500/35 hover:border-amber-400/60 focus:border-amber-400'
+                  : 'border-indigo-500/35 hover:border-indigo-400/60 focus:border-emerald-400'
+              }`}
             >
               {SAMPLE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -693,7 +753,11 @@ export const App: React.FC = () => {
                 setSelectedTop(ex.topModule);
                 setHardwareConfig(ex.createHardwareConfig());
               }}
-              className="bg-slate-950 border border-indigo-500/35 hover:border-indigo-400/60 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-400 transition"
+              className={`bg-slate-950 border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none transition ${
+                isWarm
+                  ? 'border-amber-500/35 hover:border-amber-400/60 focus:border-amber-400'
+                  : 'border-indigo-500/35 hover:border-indigo-400/60 focus:border-emerald-400'
+              }`}
             >
               <option value="">Multi-file examples...</option>
               {EXAMPLE_PROJECTS.map((x) => (
@@ -713,7 +777,7 @@ export const App: React.FC = () => {
 
             {/* Upload: multi-select / folder / ZIP (drag-and-drop works anywhere on the page) */}
             <label className={uploadBtn} title="Select multiple .v/.sv files">
-              <FileCode className="w-4 h-4 text-emerald-400" />
+              <FileCode className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
               <span>
                 {t.uploadVerilog} ({projectFiles.length} {t.filesSuffix})
               </span>
@@ -729,7 +793,7 @@ export const App: React.FC = () => {
               />
             </label>
             <label className={uploadBtn} title="Upload a whole project folder">
-              <FolderOpen className="w-4 h-4 text-emerald-400" />
+              <FolderOpen className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
               <span>Folder</span>
               <input
                 type="file"
@@ -743,7 +807,7 @@ export const App: React.FC = () => {
               />
             </label>
             <label className={uploadBtn} title="Upload a project .zip">
-              <FileArchive className="w-4 h-4 text-emerald-400" />
+              <FileArchive className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
               <span>ZIP</span>
               <input
                 type="file"
@@ -756,14 +820,33 @@ export const App: React.FC = () => {
               />
             </label>
 
+            {/* Theme Switcher (Warm FPGA Lab / Classic) */}
+            <button
+              type="button"
+              onClick={handleToggleTheme}
+              title="Switch UI Theme (Warm FPGA Lab / Classic)"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                isWarm
+                  ? 'bg-orange-500/15 hover:bg-orange-500/25 text-orange-200 border-orange-500/40'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600'
+              }`}
+            >
+              <Palette className={`w-3.5 h-3.5 ${isWarm ? 'text-orange-300' : 'text-emerald-300'}`} />
+              <span>{isWarm ? 'FPGA Lab' : 'Classic'}</span>
+            </button>
+
             {/* Language Switcher (EN / 繁體中文) */}
             <button
               type="button"
               onClick={handleToggleLanguage}
               title="Switch Language / 切換語言 (English / 繁體中文)"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 border border-violet-500/40 transition"
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition ${
+                isWarm
+                  ? 'bg-slate-800/90 hover:bg-slate-700 text-amber-200 border-slate-700'
+                  : 'bg-violet-500/15 hover:bg-violet-500/25 text-violet-200 border-violet-500/40'
+              }`}
             >
-              <Globe className="w-3.5 h-3.5 text-violet-300" />
+              <Globe className={`w-3.5 h-3.5 ${isWarm ? 'text-amber-300' : 'text-violet-300'}`} />
               <span>{lang === 'en' ? '繁體中文' : 'English'}</span>
             </button>
           </div>
@@ -783,6 +866,7 @@ export const App: React.FC = () => {
           backendMode={backendMode}
           compiling={compiling}
           t={t}
+          theme={uiTheme}
           onCompile={() => void compile()}
           onToggleRun={handleToggleRun}
           onStepFullCycle={stepFullCycle}
@@ -804,18 +888,20 @@ export const App: React.FC = () => {
                 ? 'border-rose-500/50 bg-rose-950/35'
                 : warnCount || validationIssues.length > 0
                 ? 'border-amber-500/50 bg-amber-950/25'
+                : isWarm
+                ? 'border-amber-500/45 bg-amber-950/20'
                 : 'border-emerald-500/40 bg-emerald-950/25'
             }`}
           >
             <div className="flex flex-wrap items-center gap-2 text-slate-200">
               {compiling ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-300" />
+                <Loader2 className={`w-3.5 h-3.5 animate-spin ${isWarm ? 'text-amber-300' : 'text-violet-300'}`} />
               ) : errorCount ? (
                 <XCircle className="w-3.5 h-3.5 text-rose-400" />
               ) : warnCount || validationIssues.length > 0 ? (
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
               ) : (
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <CheckCircle2 className={`w-3.5 h-3.5 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
               )}
               <span>
                 {compiling
@@ -829,7 +915,9 @@ export const App: React.FC = () => {
                     }`}
               </span>
               {compileInfo && (
-                <span className="text-cyan-300/80">• {compileInfo}</span>
+                <span className={isWarm ? 'text-amber-300/90' : 'text-cyan-300/80'}>
+                  • {compileInfo}
+                </span>
               )}
             </div>
             {messages.map((m, i) => (
@@ -861,7 +949,11 @@ export const App: React.FC = () => {
         )}
 
         {/* Tabs */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-500/20 pb-2.5">
+        <div
+          className={`flex flex-wrap items-center justify-between gap-2 border-b pb-2.5 ${
+            isWarm ? 'border-amber-500/20' : 'border-indigo-500/20'
+          }`}
+        >
           <div className="flex flex-wrap items-center gap-2">
             {(
               [
@@ -888,7 +980,9 @@ export const App: React.FC = () => {
                 onClick={() => setActiveTab(id)}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition ${
                   activeTab === id
-                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/50 shadow-sm'
+                    ? isWarm
+                      ? 'bg-amber-500/20 text-amber-200 border border-amber-400/50 shadow-sm'
+                      : 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/50 shadow-sm'
                     : 'text-slate-400 hover:text-slate-200 bg-slate-900/60 border border-slate-800'
                 }`}
               >
@@ -898,7 +992,9 @@ export const App: React.FC = () => {
             ))}
           </div>
           <div className="hidden sm:flex items-center gap-2 text-xs text-slate-300 font-mono bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-xl">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <CheckCircle2
+              className={`w-3.5 h-3.5 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`}
+            />
             <span>
               {ports.length} {t.portsUnit} • {runtimeInternals.length}{' '}
               {t.internalSignalsUnit} • {hardwareConfig.components.length}{' '}
@@ -917,6 +1013,7 @@ export const App: React.FC = () => {
                 signals={signals}
                 validationIssues={validationIssues}
                 t={t}
+                theme={uiTheme}
                 onToggleInputBit={handleToggleInputBit}
                 onSetInputBit={handleSetInputBit}
               />
@@ -950,7 +1047,11 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'code' && (
-          <div className="bg-slate-900/95 border border-emerald-500/25 rounded-2xl p-4 shadow-xl">
+          <div
+            className={`bg-slate-900/95 border rounded-2xl p-4 shadow-xl ${
+              isWarm ? 'border-amber-500/30' : 'border-emerald-500/25'
+            }`}
+          >
             <div className="flex flex-col lg:flex-row gap-4">
               <ProjectExplorer
                 files={projectFiles}
@@ -975,7 +1076,13 @@ export const App: React.FC = () => {
               <div className="flex-1 min-w-0 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border bg-emerald-500/20 border-emerald-400/50 text-emerald-200">
+                    <span
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold border ${
+                        isWarm
+                          ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                          : 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                      }`}
+                    >
                       {activeFile?.name ?? '(no file)'}
                     </span>
                     {!projectFiles.some((f) => f.name === 'rom_init.hex') && (
@@ -986,7 +1093,11 @@ export const App: React.FC = () => {
                           setProjectFiles((prev) => [...prev, f]);
                           setActiveFileId(f.id);
                         }}
-                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono bg-violet-500/15 hover:bg-violet-500/25 border border-violet-500/40 text-violet-200 transition"
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono border transition ${
+                          isWarm
+                            ? 'bg-orange-500/15 hover:bg-orange-500/25 border-orange-500/40 text-orange-200'
+                            : 'bg-violet-500/15 hover:bg-violet-500/25 border-violet-500/40 text-violet-200'
+                        }`}
                       >
                         <Plus className="w-3 h-3" />
                         {t.addMemFileBtn}
@@ -1008,7 +1119,9 @@ export const App: React.FC = () => {
                     setProjectFiles((files) => replaceFile(files, activeFile.id, text));
                   }}
                   spellCheck={false}
-                  className="w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                  className={`w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none ${
+                    isWarm ? 'focus:border-amber-500' : 'focus:border-emerald-500'
+                  }`}
                 />
               </div>
             </div>
@@ -1021,6 +1134,7 @@ export const App: React.FC = () => {
           history={history}
           components={hardwareConfig.components}
           t={t}
+          theme={uiTheme}
         />
       </main>
     </div>
