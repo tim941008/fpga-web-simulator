@@ -14,9 +14,7 @@
  */
 import { PortDefinition } from '../types/fpga';
 import { VerilogXMLParser } from '../vendor/8bitworkshop/hdl/vxmlparser';
-import { HDLModuleWASM } from '../vendor/8bitworkshop/hdl/hdlwasm';
 import { HDLModuleJS } from '../vendor/8bitworkshop/hdl/hdlruntime';
-import { binaryenReady } from '../vendor/8bitworkshop/hdl/binaryen-shim';
 
 export interface CompileMessage {
   severity: 'error' | 'warning';
@@ -241,6 +239,10 @@ export class FpgaRuntime {
       };
 
       try {
+        const [{ HDLModuleWASM }, { binaryenReady }] = await Promise.all([
+          import('../vendor/8bitworkshop/hdl/hdlwasm'),
+          import('../vendor/8bitworkshop/hdl/binaryen-shim'),
+        ]);
         await binaryenReady();
         const wasmModel = new HDLModuleWASM(topDef, constPool);
         (wasmModel as any).getFileData = getFileData;
