@@ -184,7 +184,7 @@ export function validateProject(project: VerilogProject): ProjectDiagnostic[] {
 
   const modules = scanProject(project.files);
 
-  // duplicate modules
+  // duplicate modules (advisory warning; Verilator is the source of truth)
   const byName = new Map<string, ModuleInfo[]>();
   for (const mod of modules) {
     byName.set(mod.name, [...(byName.get(mod.name) ?? []), mod]);
@@ -192,7 +192,7 @@ export function validateProject(project: VerilogProject): ProjectDiagnostic[] {
   for (const [name, defs] of byName) {
     if (defs.length > 1) {
       diags.push({
-        severity: 'error',
+        severity: 'warning',
         code: 'DUPLICATE_MODULE',
         message: `Module "${name}" is defined ${defs.length} times (${defs
           .map((d) => d.fileName)
@@ -214,14 +214,14 @@ export function validateProject(project: VerilogProject): ProjectDiagnostic[] {
     });
   }
 
-  // missing modules (instantiated but never defined)
+  // missing modules (regex-inferred advisory warning; Verilator is the source of truth)
   const reportedMissing = new Set<string>();
   for (const mod of modules) {
     for (const inst of mod.instantiates) {
       if (!byName.has(inst) && !reportedMissing.has(`${mod.name}>${inst}`)) {
         reportedMissing.add(`${mod.name}>${inst}`);
         diags.push({
-          severity: 'error',
+          severity: 'warning',
           code: 'MISSING_MODULE',
           message: `Module "${inst}" (instantiated in "${mod.name}") is not defined in any project file.`,
           file: mod.fileName,
@@ -230,7 +230,7 @@ export function validateProject(project: VerilogProject): ProjectDiagnostic[] {
     }
   }
 
-  // circular references
+  // circular references (regex-inferred advisory warning; Verilator is the source of truth)
   const graph = new Map<string, string[]>();
   for (const mod of modules) {
     if (!graph.has(mod.name)) graph.set(mod.name, mod.instantiates.filter((i) => byName.has(i)));
@@ -252,7 +252,7 @@ export function validateProject(project: VerilogProject): ProjectDiagnostic[] {
   for (const n of graph.keys()) if ((color.get(n) ?? 0) === 0) dfs(n);
   for (const cyc of cycles) {
     diags.push({
-      severity: 'error',
+      severity: 'warning',
       code: 'CIRCULAR_REFERENCE',
       message: `Circular module reference: ${cyc.join(' → ')}`,
       file: byName.get(cyc[0])?.[0]?.fileName ?? null,

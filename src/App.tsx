@@ -362,6 +362,8 @@ export const App: React.FC = () => {
 
     if (!result) {
       // project validation failed: Verilator was not invoked
+      runtimeRef.current?.dispose();
+      runtimeRef.current = null;
       setBackendMode('none');
       setRuntimePorts(null);
       setRuntimeInternals([]);
@@ -370,6 +372,8 @@ export const App: React.FC = () => {
     }
 
     if (!result.runtime) {
+      runtimeRef.current?.dispose();
+      runtimeRef.current = null;
       setBackendMode('none');
       setRuntimePorts(null);
       setRuntimeInternals([]);
@@ -542,13 +546,35 @@ export const App: React.FC = () => {
 
   const importFileList = async (list: FileList | null, mode: 'replace' | 'append') => {
     if (!list || list.length === 0) return;
-    loadEntries(await entriesFromFiles(Array.from(list)), mode);
+    try {
+      loadEntries(await entriesFromFiles(Array.from(list)), mode);
+    } catch (err) {
+      setMessages([
+        {
+          severity: 'error',
+          file: null,
+          line: 0,
+          msg: err instanceof Error ? err.message : String(err),
+        },
+      ]);
+    }
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
-    loadEntries(await entriesFromDataTransfer(e.dataTransfer), 'replace');
+    try {
+      loadEntries(await entriesFromDataTransfer(e.dataTransfer), 'replace');
+    } catch (err) {
+      setMessages([
+        {
+          severity: 'error',
+          file: null,
+          line: 0,
+          msg: err instanceof Error ? err.message : String(err),
+        },
+      ]);
+    }
   };
 
   const handleRename = (id: string, newName: string): string | undefined => {

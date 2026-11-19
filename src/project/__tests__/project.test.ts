@@ -14,7 +14,13 @@ import {
   VerilogProject,
 } from '../projectModel';
 import { compileProject, Compiler } from '../projectCompile';
-import { filterEntries } from '../projectImport';
+import {
+  entriesFromFiles,
+  filterEntries,
+  isAcceptedPath,
+  unzipProject,
+} from '../projectImport';
+import { zipSync, strToU8 } from 'fflate';
 import { EXAMPLE_PROJECTS } from '../../presets/exampleProjects';
 import { SAMPLE_PRESETS } from '../../presets/sampleDesigns';
 import type { CompileResult } from '../../sim/fpgaRuntime';
@@ -80,8 +86,8 @@ describe('multi-file project compile (validation + dispatch)', () => {
     expect(names).toEqual(['top.v', 'counter.v', 'sub/decoder.v', 'defines.vh']);
   });
 
-  it('does not invoke Verilator when validation has errors', async () => {
-    const project = makeProject([{ name: 'top.v', content: TOP2 }], 'top'); // counter missing
+  it('does not invoke Verilator when validation has hard errors (MISSING_TOP / NO_SOURCES)', async () => {
+    const project = makeProject([{ name: 'top.v', content: TOP2 }], 'nonexistent_top');
     let called = false;
     const out = await compileProject(project, async () => {
       called = true;
@@ -89,7 +95,51 @@ describe('multi-file project compile (validation + dispatch)', () => {
     });
     expect(called).toBe(false);
     expect(out.result).toBeNull();
-    expect(out.messages.some((m) => m.severity === 'error' && /counter/.test(m.msg))).toBe(true);
+    expect(out.messages.some((m) => m.severity === 'error' && /Missing top module/.test(m.msg))).toBe(true);
+  });
+
+  it('invokes Verilator when regex-inferred diagnostics are warning-level only (CRIT-02)', async () => {
+    const project = makeProject([{ name: 'top.v', content: TOP2 }], 'top'); // counter missing -> warning only
+    let called = false;
+    const out = await compileProject(project, async () => {
+      called = true;
+      return fakeResult();
+    });
+    expect(called).toBe(true);
+    expect(out.result).not.toBeNull();
+    expect(hasErrors(out.diagnostics)).toBe(false);
+    expect(out.messages.some((m) => m.severity === 'warning' && /counter/.test(m.msg))).toBe(true);
+  });
+
+  it('preserves generate/ifdef submodule files and does not block on unrelated tb.v (CRIT-02)', async () => {
+    const genTop = `module top(input [3:0] a, output [3:0] y);
+      genvar i;
+      generate
+        for (i = 0; i < 4; i = i + 1) begin : g
+          inv_cell u_inv (.a(a[i]), .y(y[i]));
+        end
+      endgenerate
+    endmodule`;
+    const inv = `module inv_cell(input a, output y); assign y = ~a; endmodule`;
+    const tb = `module tb; top dut(); missing_sim_helper u_h(); endmodule`;
+    const project = makeProject(
+      [
+        { name: 'top.v', content: genTop },
+        { name: 'inv_cell.v', content: inv },
+        { name: 'tb.v', content: tb },
+      ],
+      'top'
+    );
+    let sentFiles: string[] = [];
+    const out = await compileProject(project, async (files) => {
+      sentFiles = files.map((f) => f.name);
+      return fakeResult();
+    });
+    expect(hasErrors(out.diagnostics)).toBe(false);
+    expect(sentFiles).toContain('top.v');
+    expect(sentFiles).toContain('inv_cell.v');
+    // tb.v is a strict ancestor of top, so it is excluded to avoid Verilator --top-module errors
+    expect(sentFiles).not.toContain('tb.v');
   });
 });
 
@@ -256,6 +306,51 @@ describe('import filtering', () => {
       { name: 'defs.vh', content: '' },
     ]);
     expect(out.map((e) => e.name)).toEqual(['top.v', 'counter.v', 'defs.vh']);
+  });
+
+  it('rejects unsupported extensions and traversal paths early (MAJ-01)', () => {
+    expect(isAcceptedPath('src/top.v')).toBe(true);
+    expect(isAcceptedPath('.git/config')).toBe(false);
+    expect(isAcceptedPath('../evil.v')).toBe(false);
+    expect(isAcceptedPath('assets/big.bin')).toBe(false);
+  });
+
+  it('throws a friendly error on corrupt ZIP data and enforces ZIP limits (MAJ-01)', () => {
+    expect(() => unzipProject(new Uint8Array([1, 2, 3, 4]))).toThrow(/Failed to extract ZIP archive/);
+
+    const zipBytes = zipSync({
+      'a.v': strToU8('module a; endmodule'),
+      'b.v': strToU8('module b; endmodule'),
+      'c.v': strToU8('module c; endmodule'),
+    });
+    expect(unzipProject(zipBytes).map((e) => e.name)).toEqual(['a.v', 'b.v', 'c.v']);
+    expect(() => unzipProject(zipBytes, { maxFiles: 2 })).toThrow(/maximum allowed file count/i);
+    expect(() => unzipProject(zipBytes, { maxTotalBytes: 10 })).toThrow(/exceeds/i);
+  });
+
+  it('skips unsupported files before reading content and enforces limits in entriesFromFiles (MAJ-01)', async () => {
+    let readUnsupported = false;
+    const fakeUnsupported = {
+      name: 'huge.bin',
+      size: 999_999_999,
+      text: async () => {
+        readUnsupported = true;
+        return '';
+      },
+    } as unknown as File;
+    const fakeValid = {
+      name: 'top.v',
+      size: 20,
+      text: async () => 'module top; endmodule',
+    } as unknown as File;
+
+    const entries = await entriesFromFiles([fakeUnsupported, fakeValid]);
+    expect(readUnsupported).toBe(false);
+    expect(entries.map((e) => e.name)).toEqual(['top.v']);
+
+    await expect(
+      entriesFromFiles([fakeValid, fakeValid], { maxFiles: 1 })
+    ).rejects.toThrow(/maximum allowed file count/i);
   });
 });
 

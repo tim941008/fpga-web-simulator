@@ -38,30 +38,39 @@ async function defaultCompiler(files: SourceFile[], top: string): Promise<Compil
 }
 
 /**
- * Computes the set of modules transitively instantiated starting from `topModule`.
- * Ensures that if a user selects a submodule as the active `topModule`, parent modules
- * in other files that instantiate `topModule` are not passed to Verilator (which would
- * otherwise fail with "Specified --top-module '...' isn't at the top level").
+ * Selects project files to pass to Verilator for `topModule`.
+ * Uses a strict-ancestor denylist rather than a regex reachability allowlist:
+ * - Excludes a source file only when every module it defines is a strict ancestor
+ *   (transitively instantiates `topModule`), preventing Verilator from failing with
+ *   "Specified --top-module '...' isn't at the top level" when compiling a submodule.
+ * - Preserves all other source files (including submodules instantiated inside
+ *   `generate` or `` `ifdef `` blocks that regex scanning cannot see) so Verilator
+ *   remains the authoritative resolver.
  */
 function selectFilesForTop(project: VerilogProject): SourceFile[] {
   const modules = scanProject(project.files);
-  const byName = new Map<string, typeof modules>();
+  const parentsOf = new Map<string, Set<string>>();
   const byFileId = new Map<string, string[]>();
 
   for (const mod of modules) {
-    byName.set(mod.name, [...(byName.get(mod.name) ?? []), mod]);
     byFileId.set(mod.fileId, [...(byFileId.get(mod.fileId) ?? []), mod.name]);
+    for (const child of mod.instantiates) {
+      const set = parentsOf.get(child) ?? new Set<string>();
+      set.add(mod.name);
+      parentsOf.set(child, set);
+    }
   }
 
-  const reachable = new Set<string>();
+  const strictAncestors = new Set<string>();
   const queue = [project.topModule];
+  const visited = new Set<string>([project.topModule]);
   while (queue.length > 0) {
     const cur = queue.shift()!;
-    if (reachable.has(cur)) continue;
-    reachable.add(cur);
-    for (const def of byName.get(cur) ?? []) {
-      for (const child of def.instantiates) {
-        if (!reachable.has(child)) queue.push(child);
+    for (const parent of parentsOf.get(cur) ?? []) {
+      if (parent !== project.topModule) strictAncestors.add(parent);
+      if (!visited.has(parent)) {
+        visited.add(parent);
+        queue.push(parent);
       }
     }
   }
@@ -71,7 +80,8 @@ function selectFilesForTop(project: VerilogProject): SourceFile[] {
       if (!isSourceFile(f.name)) return true; // always include headers (.vh/.svh) and memory files (.hex/.mem)
       const fileMods = byFileId.get(f.id) ?? [];
       if (fileMods.length === 0) return true;
-      return fileMods.some((m) => reachable.has(m));
+      // Only exclude if EVERY module in this file is a strict ancestor of topModule
+      return !fileMods.every((m) => strictAncestors.has(m));
     })
     .map((f) => ({ name: f.name, content: f.content }));
 }
