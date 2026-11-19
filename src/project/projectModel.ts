@@ -33,6 +33,8 @@ export type DiagnosticCode =
   | 'DUPLICATE_MODULE'
   | 'CIRCULAR_REFERENCE'
   | 'MISSING_INCLUDE'
+  | 'MISSING_PACKAGE'
+  | 'CIRCULAR_PACKAGE'
   | 'DUPLICATE_FILE';
 
 export interface ProjectDiagnostic {
@@ -85,6 +87,65 @@ const KEYWORDS = new Set([
 
 export function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/.*$/gm, ' ');
+}
+
+function stripCommentsAndStrings(src: string): string {
+  return stripComments(src).replace(/"(?:\\.|[^"\\])*"/g, ' "" ');
+}
+
+/**
+ * Extract SystemVerilog `package <name>;` declarations from one source text.
+ * Supports multiple packages per file, ignores comments/strings, preserves order.
+ */
+export function scanPackages(content: string): string[] {
+  const text = stripCommentsAndStrings(content);
+  const pkgs: string[] = [];
+  const seen = new Set<string>();
+  const re = /\bpackage\s+(?:automatic\s+|static\s+)?([A-Za-z_][A-Za-z0-9_$]*)\s*;/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[1];
+    if (name === 'std' || KEYWORDS.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    pkgs.push(name);
+  }
+  return pkgs;
+}
+
+/**
+ * Extract SystemVerilog package names referenced via `import pkg::*;`,
+ * `import pkg::sym;`, comma-separated import lists, or scoped `pkg::sym` references.
+ * Ignores comments/strings, `std`, `$unit`, and HDL keywords; preserves first-seen order.
+ */
+export function scanPackageImports(content: string): string[] {
+  const text = stripCommentsAndStrings(content);
+  const imports: string[] = [];
+  const seen = new Set<string>();
+  const add = (pkg: string) => {
+    if (!pkg || pkg === 'std' || pkg === '$unit' || KEYWORDS.has(pkg) || seen.has(pkg)) return;
+    seen.add(pkg);
+    imports.push(pkg);
+  };
+
+  // 1. Explicit `import pkg::*, pkg2::sym;` statements
+  const importStmtRe = /\bimport\s+([^;]+);/g;
+  let sm: RegExpExecArray | null;
+  while ((sm = importStmtRe.exec(text)) !== null) {
+    const pkgRe = /\b([A-Za-z_][A-Za-z0-9_$]*)\s*::/g;
+    let pm: RegExpExecArray | null;
+    while ((pm = pkgRe.exec(sm[1])) !== null) {
+      add(pm[1]);
+    }
+  }
+
+  // 2. Scoped package references outside `import` (e.g. `game_config::PLAYER_1`)
+  const scopedRe = /\b([A-Za-z_][A-Za-z0-9_$]*)\s*::/g;
+  let rm: RegExpExecArray | null;
+  while ((rm = scopedRe.exec(text)) !== null) {
+    add(rm[1]);
+  }
+
+  return imports;
 }
 
 /** Extract module declarations (and what they instantiate) from one source text. */
@@ -278,6 +339,73 @@ export function validateProject(project: VerilogProject): ProjectDiagnostic[] {
         });
       }
     }
+  }
+
+  // SystemVerilog package / import advisory diagnostics (Verilator remains source of truth)
+  const pkgProviders = new Map<string, ProjectFile[]>();
+  const filePackages = new Map<string, string[]>();
+  const fileImports = new Map<string, string[]>();
+  for (const f of sources) {
+    const declared = scanPackages(f.content);
+    const imported = scanPackageImports(f.content);
+    filePackages.set(f.id, declared);
+    fileImports.set(f.id, imported);
+    for (const pkg of declared) {
+      pkgProviders.set(pkg, [...(pkgProviders.get(pkg) ?? []), f]);
+    }
+  }
+
+  const reportedMissingPkg = new Set<string>();
+  for (const f of sources) {
+    const ownPkgs = new Set(filePackages.get(f.id) ?? []);
+    for (const pkg of fileImports.get(f.id) ?? []) {
+      if (!pkgProviders.has(pkg) && !ownPkgs.has(pkg) && !reportedMissingPkg.has(`${f.id}>${pkg}`)) {
+        reportedMissingPkg.add(`${f.id}>${pkg}`);
+        diags.push({
+          severity: 'warning',
+          code: 'MISSING_PACKAGE',
+          message: `Package "${pkg}" (imported in ${f.name}) is not defined in any project file.`,
+          file: f.name,
+        });
+      }
+    }
+  }
+
+  // Detect circular package dependencies across files
+  const pkgGraph = new Map<string, string[]>();
+  const fileById = new Map<string, ProjectFile>(sources.map((f) => [f.id, f]));
+  for (const f of sources) {
+    const deps = new Set<string>();
+    for (const pkg of fileImports.get(f.id) ?? []) {
+      for (const provider of pkgProviders.get(pkg) ?? []) {
+        if (provider.id !== f.id) deps.add(provider.id);
+      }
+    }
+    pkgGraph.set(f.id, [...deps]);
+  }
+  const pkgColor = new Map<string, 0 | 1 | 2>();
+  const pkgStack: string[] = [];
+  const pkgCycles: string[][] = [];
+  const pkgDfs = (id: string) => {
+    pkgColor.set(id, 1);
+    pkgStack.push(id);
+    for (const next of pkgGraph.get(id) ?? []) {
+      const c = pkgColor.get(next) ?? 0;
+      if (c === 0) pkgDfs(next);
+      else if (c === 1) pkgCycles.push([...pkgStack.slice(pkgStack.indexOf(next)), next]);
+    }
+    pkgStack.pop();
+    pkgColor.set(id, 2);
+  };
+  for (const id of pkgGraph.keys()) if ((pkgColor.get(id) ?? 0) === 0) pkgDfs(id);
+  for (const cyc of pkgCycles) {
+    const namesChain = cyc.map((id) => fileById.get(id)?.name ?? id);
+    diags.push({
+      severity: 'warning',
+      code: 'CIRCULAR_PACKAGE',
+      message: `Circular package dependency: ${namesChain.join(' → ')}`,
+      file: namesChain[0] ?? null,
+    });
   }
 
   return diags;
