@@ -50,6 +50,30 @@ export function isLogicType(arg:any): arg is HDLLogicType {
     return typeof arg.left === 'number' && typeof arg.right === 'number';
 }
 
+/**
+ * Computes the bit width of a packed logic vector, supporting both
+ * descending (`[15:0]`, left >= right) and ascending (`[0:15]`, left < right) ranges.
+ */
+export function getLogicBitWidth(dt: HDLLogicType): number {
+    return Math.abs(dt.left - dt.right) + 1;
+}
+
+/**
+ * Returns true when a packed logic range is declared in ascending order (e.g. `[0:15]`),
+ * where `left` is the MSB index and `right` is the LSB index.
+ */
+export function isAscendingRange(dt: HDLLogicType): boolean {
+    return dt.left < dt.right;
+}
+
+/**
+ * Returns a 32-bit bitmask covering `getLogicBitWidth(dt)` bits (or `-1` for >= 32 bits).
+ */
+export function getLogicMask32(dt: HDLLogicType): number {
+    const width = getLogicBitWidth(dt);
+    return width >= 32 ? -1 : ((1 << width) - 1);
+}
+
 export function isArrayType(arg:any): arg is HDLUnpackArray {
     return arg.subtype != null && arg.low != null && arg.high != null
       && typeof arg.low.cvalue === 'number' && typeof arg.high.cvalue === 'number';

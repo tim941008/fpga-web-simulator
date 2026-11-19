@@ -4,7 +4,7 @@
 
 import binaryen from './binaryen-shim';
 //import binaryen = require("binaryen");
-import { hasDataType, HDLBinop, HDLBlock, HDLConstant, HDLDataType, HDLDataTypeObject, HDLExpr, HDLExtendop, HDLFuncCall, HDLModuleDef, HDLModuleRunner, HDLSourceLocation, HDLSourceObject, HDLTriop, HDLUnop, HDLValue, HDLVariableDef, HDLVarRef, HDLWhileOp, isArrayItem, isArrayType, isBigConstExpr, isBinop, isBlock, isConstExpr, isFuncCall, isLogicType, isTriop, isUnop, isVarDecl, isVarRef, isWhileop } from "./hdltypes";
+import { getLogicBitWidth, getLogicMask32, hasDataType, HDLBinop, HDLBlock, HDLConstant, HDLDataType, HDLDataTypeObject, HDLExpr, HDLExtendop, HDLFuncCall, HDLModuleDef, HDLModuleRunner, HDLSourceLocation, HDLSourceObject, HDLTriop, HDLUnop, HDLValue, HDLVariableDef, HDLVarRef, HDLWhileOp, isArrayItem, isArrayType, isBigConstExpr, isBinop, isBlock, isConstExpr, isFuncCall, isLogicType, isTriop, isUnop, isVarDecl, isVarRef, isWhileop } from "./hdltypes";
 import { HDLError } from "./hdlruntime";
 
 const VERILATOR_UNIT_FUNCTIONS = [
@@ -35,16 +35,17 @@ const TRACEBUF = "$$tbuf";
 
 function getDataTypeSize(dt: HDLDataType) : number {
     if (isLogicType(dt)) {
-        if (dt.left <= 7)
+        const width = getLogicBitWidth(dt);
+        if (width <= 8)
             return 1;
-        else if (dt.left <= 15)
+        else if (width <= 16)
             return 2;
-        else if (dt.left <= 31)
+        else if (width <= 32)
             return 4;
-        else if (dt.left <= 63)
+        else if (width <= 64)
             return 8;
         else
-            return (dt.left >> 6) * 8 + 8; // 64-bit words
+            return (((width - 1) >> 6) + 1) * 8; // 64-bit words
     } else if (isArrayType(dt)) {
         // TODO: additional padding for array?
         return (Math.abs(dt.high.cvalue - dt.low.cvalue) + 1) * getDataTypeSize(dt.subtype);
@@ -68,7 +69,7 @@ function getArrayElementSizeFromType(dtype: HDLDataType) : number {
 function getArrayElementSizeFromExpr(e: HDLExpr) : number {
     if (hasDataType(e) && isArrayType(e.dtype)) {
         return getDataTypeSize(e.dtype.subtype);
-    } else if (hasDataType(e) && isLogicType(e.dtype) && e.dtype.left > 63) {
+    } else if (hasDataType(e) && isLogicType(e.dtype) && getLogicBitWidth(e.dtype) > 64) {
         throw new HDLError(e, `elements > 64 bits not supported`);
     }
     throw new HDLError(e, `cannot figure out array element size`);
@@ -490,8 +491,8 @@ export class HDLModuleWASM implements HDLModuleRunner {
             eltype = eltype.subtype;
         }
         var mask = -1; // set all bits
-        if (eltype && isLogicType(eltype) && eltype.left < 31) {
-            mask = (1 << (eltype.left+1)) - 1; // set partial bits
+        if (eltype && isLogicType(eltype) && getLogicBitWidth(eltype) < 32) {
+            mask = getLogicMask32(eltype); // set partial bits
         }
         // define get/set on proxy object
         Object.defineProperty(proxy, vref.name, {
@@ -571,7 +572,7 @@ export class HDLModuleWASM implements HDLModuleRunner {
                 this.state[rec.name] = Math.random() * 4294967296; // don't need to mask
             } else if (isArrayType(rec.type) && isLogicType(rec.type.subtype)) {
                 // array types are't mask-protected yet
-                var mask = (1 << (rec.type.subtype.left + 1)) - 1;
+                var mask = getLogicMask32(rec.type.subtype);
                 for (var i=0; i<arr.length; i++) {
                     arr[i] = (Math.random() * 4294967296) & mask;
                 }
@@ -1027,32 +1028,36 @@ export class HDLModuleWASM implements HDLModuleRunner {
     }
 
     castexpr(val: number, tsrc: HDLDataType, tdst: HDLDataType) : number {
-        if (isLogicType(tsrc) && isLogicType(tdst) && tsrc.right == 0 && tdst.right == 0) {
-            if (tsrc.left == tdst.left) {
-                return val;
-            } else if (tsrc.left > 63 || tdst.left > 63) {
+        if (isLogicType(tsrc) && isLogicType(tdst)) {
+            const srcWidth = getLogicBitWidth(tsrc);
+            const dstWidth = getLogicBitWidth(tdst);
+            if (srcWidth > 64 || dstWidth > 64) {
                 throw new HDLError(tdst, `values > 64 bits not supported`);
-            } else if (tsrc.left <= 31 && tdst.left <= 31 && !tsrc.signed && !tdst.signed) {
+            } else if (srcWidth == dstWidth && tsrc.signed == tdst.signed) {
                 return val;
-            } else if (tsrc.left > 31 && tdst.left > 31 && !tsrc.signed && !tdst.signed) {
+            } else if (srcWidth <= 32 && dstWidth <= 32 && !tsrc.signed && !tdst.signed) {
                 return val;
-            } else if (tsrc.left == 7 && tdst.left == 31 && tsrc.signed && tdst.signed) {
+            } else if (srcWidth > 32 && dstWidth > 32 && !tsrc.signed && !tdst.signed) {
+                return val;
+            } else if (srcWidth == 8 && dstWidth == 32 && tsrc.signed && tdst.signed) {
                 return this.bmod.i32.extend8_s(val);
-            } else if (tsrc.left == 15 && tdst.left == 31 && tsrc.signed && tdst.signed) {
+            } else if (srcWidth == 16 && dstWidth == 32 && tsrc.signed && tdst.signed) {
                 return this.bmod.i32.extend16_s(val);
-            } else if (tsrc.left <= 31 && tdst.left > 31) { // 32 -> 64
+            } else if (srcWidth <= 32 && dstWidth > 32) { // 32 -> 64
                 if (tsrc.signed)
                     return this.bmod.i64.extend_s(val);
                 else
                     return this.bmod.i64.extend_u(val);
-            } else if (tsrc.left > 31 && tdst.left <= 31) { // 64 -> 32
+            } else if (srcWidth > 32 && dstWidth <= 32) { // 64 -> 32
                 return this.bmod.i32.wrap(val);
-            } else if (tsrc.left < 31 && tdst.left == 31 && tsrc.signed) { // sign extend via shift (silice case)
+            } else if (srcWidth < 32 && dstWidth <= 32 && tsrc.signed && tdst.signed) { // sign extend via shift
                 let inst = this.i3264(tdst);
-                var shift = inst.const(31 - tsrc.left, 0);
+                var shift = inst.const(32 - srcWidth, 0);
                 return inst.shr_s(inst.shl(val, shift), shift);
+            } else if (srcWidth <= 32 && dstWidth <= 32 && tsrc.signed != tdst.signed) {
+                return val;
             }
-            throw new HDLError([tsrc, tdst], `cannot cast ${tsrc.left}/${tsrc.signed} to ${tdst.left}/${tdst.signed}`);
+            throw new HDLError([tsrc, tdst], `cannot cast ${srcWidth}/${tsrc.signed} to ${dstWidth}/${tdst.signed}`);
         }
         throw new HDLError([tsrc, tdst], `cannot cast`);
     }
