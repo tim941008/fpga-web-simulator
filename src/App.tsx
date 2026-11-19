@@ -38,9 +38,11 @@ import {
   sampleLiveMatrixIntoBuffer,
 } from './config/matrixMapping';
 import {
-  loadHardwareConfig,
-  resetHardwareConfig,
-  saveHardwareConfig,
+  buildHardwareConfigScopeKey,
+  loadScopedHardwareConfig,
+  ProjectConfigOrigin,
+  resetScopedHardwareConfig,
+  saveScopedHardwareConfig,
 } from './config/configPersistence';
 import { loadUiTheme, saveUiTheme, UiTheme } from './config/uiPreferences';
 import { BackendMode, ClockControls } from './components/ClockControls';
@@ -101,6 +103,10 @@ export const App: React.FC = () => {
 
   // ------------------------------------------------------------------ project (multi-file)
   const [selectedPresetId, setSelectedPresetId] = useState<string>(SAMPLE_PRESETS[0].id);
+  const [projectOrigin, setProjectOrigin] = useState<ProjectConfigOrigin>({
+    kind: 'preset',
+    id: SAMPLE_PRESETS[0].id,
+  });
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>(() => [
     createFile(SAMPLE_PRESETS[0].verilogFilename, SAMPLE_PRESETS[0].verilogCode),
   ]);
@@ -109,15 +115,26 @@ export const App: React.FC = () => {
   const [selectedTop, setSelectedTop] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  // ------------------------------------------------ hardware configuration (persisted)
-  const [hardwareConfig, setHardwareConfig] = useState<HardwareConfigSchema>(() => {
-    const { config } = loadHardwareConfig(SAMPLE_PRESETS[0].createHardwareConfig());
-    return config;
-  });
+  // ------------------------------------------------ hardware configuration (project + top scoped)
+  const initialConfigBootstrap = useMemo(() => {
+    const parsed = parseVerilogSource([SAMPLE_PRESETS[0].verilogCode]);
+    const scopeKey = buildHardwareConfigScopeKey(
+      { kind: 'preset', id: SAMPLE_PRESETS[0].id },
+      [SAMPLE_PRESETS[0].verilogFilename],
+      parsed.topModule
+    );
+    const { config } = loadScopedHardwareConfig(
+      scopeKey,
+      SAMPLE_PRESETS[0].createHardwareConfig(),
+      parsed.ports
+    );
+    return { scopeKey, config };
+  }, []);
 
-  useEffect(() => {
-    saveHardwareConfig(hardwareConfig);
-  }, [hardwareConfig]);
+  const [hardwareConfig, setHardwareConfig] = useState<HardwareConfigSchema>(
+    () => initialConfigBootstrap.config
+  );
+  const loadedScopeKeyRef = useRef<string>(initialConfigBootstrap.scopeKey);
 
   // --------------------------------------------------------------- sim state
   const [activeTab, setActiveTab] = useState<'board' | 'code' | 'config'>('board');
@@ -177,6 +194,46 @@ export const App: React.FC = () => {
 
   // Ports reported by Verilator are authoritative; fall back to the parser before first compile
   const ports = runtimePorts ?? verilogParsed.ports;
+
+  // Scoped hardware config key isolated per (project origin + files + active topModule)
+  const configScopeKey = useMemo(
+    () =>
+      buildHardwareConfigScopeKey(
+        projectOrigin,
+        projectFiles.map((f) => f.name),
+        topModule
+      ),
+    [projectOrigin, projectFiles, topModule]
+  );
+
+  const getDefaultConfigForOrigin = useCallback((): HardwareConfigSchema => {
+    if (projectOrigin.kind === 'preset') {
+      const preset =
+        SAMPLE_PRESETS.find((p) => p.id === projectOrigin.id) ?? SAMPLE_PRESETS[0];
+      return preset.createHardwareConfig();
+    }
+    if (projectOrigin.kind === 'example') {
+      const ex = EXAMPLE_PROJECTS.find((x) => x.id === projectOrigin.id);
+      if (ex) return ex.createHardwareConfig();
+    }
+    return SAMPLE_PRESETS[0].createHardwareConfig();
+  }, [projectOrigin]);
+
+  // Switch hardwareConfig whenever the active project or top module scope changes
+  useEffect(() => {
+    if (loadedScopeKeyRef.current === configScopeKey) return;
+    const fallback = getDefaultConfigForOrigin();
+    const { config } = loadScopedHardwareConfig(configScopeKey, fallback, ports);
+    loadedScopeKeyRef.current = configScopeKey;
+    setHardwareConfig(config);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configScopeKey]);
+
+  // Persist edits only when hardwareConfig belongs to the active scopeKey
+  useEffect(() => {
+    if (loadedScopeKeyRef.current !== configScopeKey) return;
+    saveScopedHardwareConfig(configScopeKey, hardwareConfig);
+  }, [configScopeKey, hardwareConfig]);
 
   const validationIssues = useMemo(
     () => validateHardwareConfig(hardwareConfig.components, ports),
@@ -548,6 +605,7 @@ export const App: React.FC = () => {
     debounceCompileRef.current = false;
     setRuntimePorts(null);
     if (mode === 'replace') {
+      setProjectOrigin({ kind: 'custom' });
       setProjectFiles(entries.map((e) => createFile(e.name, e.content)));
       setSelectedTop(null);
       setActiveFileId(null);
@@ -602,9 +660,8 @@ export const App: React.FC = () => {
   };
 
   const handleRestoreDefaultConfig = () => {
-    const preset =
-      SAMPLE_PRESETS.find((p) => p.id === selectedPresetId) ?? SAMPLE_PRESETS[0];
-    const restored = resetHardwareConfig(preset.createHardwareConfig());
+    const restored = resetScopedHardwareConfig(configScopeKey, getDefaultConfigForOrigin());
+    loadedScopeKeyRef.current = configScopeKey;
     setHardwareConfig(restored);
   };
 
@@ -719,12 +776,12 @@ export const App: React.FC = () => {
                 const preset = SAMPLE_PRESETS.find((p) => p.id === e.target.value);
                 if (preset) {
                   setSelectedPresetId(preset.id);
+                  setProjectOrigin({ kind: 'preset', id: preset.id });
                   debounceCompileRef.current = false;
                   setRuntimePorts(null);
                   setActiveFileId(null);
                   setSelectedTop(null);
                   setProjectFiles([createFile(preset.verilogFilename, preset.verilogCode)]);
-                  setHardwareConfig(preset.createHardwareConfig());
                 }
               }}
               className={`bg-slate-950 border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none transition ${
@@ -746,12 +803,12 @@ export const App: React.FC = () => {
               onChange={(e) => {
                 const ex = EXAMPLE_PROJECTS.find((x) => x.id === e.target.value);
                 if (!ex) return;
+                setProjectOrigin({ kind: 'example', id: ex.id });
                 debounceCompileRef.current = false;
                 setRuntimePorts(null);
                 setActiveFileId(null);
                 setProjectFiles(ex.files.map((f) => createFile(f.name, f.content)));
                 setSelectedTop(ex.topModule);
-                setHardwareConfig(ex.createHardwareConfig());
               }}
               className={`bg-slate-950 border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none transition ${
                 isWarm

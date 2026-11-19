@@ -34,10 +34,15 @@ import {
   createFullDemoHardwareConfig,
 } from '../defaultHardwareConfig';
 import {
+  buildHardwareConfigScopeKey,
+  HARDWARE_CONFIG_SCOPED_STORAGE_KEY,
   HARDWARE_CONFIG_STORAGE_KEY,
   loadHardwareConfig,
+  loadScopedHardwareConfig,
   resetHardwareConfig,
+  resetScopedHardwareConfig,
   saveHardwareConfig,
+  saveScopedHardwareConfig,
   StorageLike,
 } from '../configPersistence';
 import { parseVerilogSource } from '../../parsers/verilogParser';
@@ -402,5 +407,190 @@ describe('6. Existing Verilog Parser Regression Tests', () => {
     const alu = parseVerilogSource([SAMPLE_PRESETS[1].verilogCode]);
     expect(alu.topModule).toBe('comb_alu');
     expect(alu.ports.map((p) => p.name)).toEqual(['KEY', 'SW', 'LEDR', 'HEX0']);
+  });
+});
+
+describe('7. Project-Scoped Persistence Isolation & Legacy Migration (BUG-01)', () => {
+  const demoPorts = parseVerilogSource([SAMPLE_PRESETS[0].verilogCode]).ports;
+  const gamePorts: PortDefinition[] = [
+    { name: 'clk', direction: 'input', msb: 0, lsb: 0, width: 1 },
+    { name: 'row', direction: 'output', msb: 15, lsb: 0, width: 16 },
+    { name: 'col', direction: 'output', msb: 15, lsb: 0, width: 16 },
+  ];
+  const projectBPorts: PortDefinition[] = [
+    { name: 'sys_clk', direction: 'input', msb: 0, lsb: 0, width: 1 },
+    { name: 'led_out', direction: 'output', msb: 7, lsb: 0, width: 8 },
+  ];
+
+  const createGameConfig = (): HardwareConfigSchema => ({
+    schemaVersion: HARDWARE_CONFIG_SCHEMA_VERSION,
+    boardName: 'Game Board',
+    components: [
+      {
+        id: 'clk-game',
+        type: 'CLOCK',
+        label: 'System Clock',
+        enabled: true,
+        signalName: 'clk',
+        width: 1,
+        polarity: 'active-high',
+        defaultHz: 30,
+      },
+      {
+        id: 'mat-game',
+        type: 'MATRIX',
+        label: '16×16 LED Matrix',
+        enabled: true,
+        row: { signalName: 'row', width: 16, bitOrder: '0-to-15', polarity: 'active-high' },
+        col: { signalName: 'col', width: 16, bitOrder: '15-to-0', polarity: 'active-high' },
+        povEnabled: true,
+        color: 'emerald',
+        displayMode: 'live',
+        pattern: createDefaultMatrixPattern(),
+      },
+    ],
+  });
+
+  const demoScope = buildHardwareConfigScopeKey(
+    { kind: 'preset', id: SAMPLE_PRESETS[0].id },
+    [SAMPLE_PRESETS[0].verilogFilename],
+    'top_fpga_demo'
+  );
+  const gameScope = buildHardwareConfigScopeKey(
+    { kind: 'custom' },
+    ['game.sv', 'game_config.sv', 'game_display.sv', 'game_logic.sv'],
+    'game'
+  );
+  const gameSubScope = buildHardwareConfigScopeKey(
+    { kind: 'custom' },
+    ['game.sv', 'game_config.sv', 'game_display.sv', 'game_logic.sv'],
+    'game_display'
+  );
+  const projectBScope = buildHardwareConfigScopeKey(
+    { kind: 'custom' },
+    ['other_top.v'],
+    'other_top'
+  );
+
+  it('default example → refresh restores top_fpga_demo intended hardware config', () => {
+    const storage = createMemoryStorage();
+    const fallback = createFullDemoHardwareConfig();
+    const first = loadScopedHardwareConfig(demoScope, fallback, demoPorts, storage);
+    expect(first.source).toBe('default');
+    expect(validateHardwareConfig(first.config.components, demoPorts)).toEqual([]);
+
+    // User customizes boardName on default example and refreshes
+    const customized = { ...first.config, boardName: 'Lab Bench 1' };
+    saveScopedHardwareConfig(demoScope, customized, storage);
+
+    const reloaded = loadScopedHardwareConfig(demoScope, fallback, demoPorts, storage);
+    expect(reloaded.source).toBe('scoped');
+    expect(reloaded.config.boardName).toBe('Lab Bench 1');
+    expect(validateHardwareConfig(reloaded.config.components, demoPorts)).toEqual([]);
+  });
+
+  it('custom game project → refresh does NOT leak clk/row/col into top_fpga_demo, while retaining game config', () => {
+    const storage = createMemoryStorage();
+    const gameCfg = createGameConfig();
+    saveScopedHardwareConfig(gameScope, gameCfg, storage);
+
+    // Refresh loads default preset top_fpga_demo
+    const demoFallback = createFullDemoHardwareConfig();
+    const demoLoaded = loadScopedHardwareConfig(demoScope, demoFallback, demoPorts, storage);
+    expect(demoLoaded.source).toBe('default');
+    expect(demoLoaded.config.components.find((c) => c.type === 'CLOCK')).toMatchObject({
+      signalName: 'CLOCK_50',
+    });
+    expect(validateHardwareConfig(demoLoaded.config.components, demoPorts)).toEqual([]);
+
+    // Re-uploading the custom game project restores its valid custom clk/row/col bindings
+    const gameLoaded = loadScopedHardwareConfig(gameScope, demoFallback, gamePorts, storage);
+    expect(gameLoaded.source).toBe('scoped');
+    expect(gameLoaded.config.boardName).toBe('Game Board');
+    expect(validateHardwareConfig(gameLoaded.config.components, gamePorts)).toEqual([]);
+  });
+
+  it('isolates default example → custom project, custom project A → custom project B, and top module switches', () => {
+    const storage = createMemoryStorage();
+    expect(demoScope).not.toBe(gameScope);
+    expect(gameScope).not.toBe(projectBScope);
+    expect(gameScope).not.toBe(gameSubScope);
+
+    // Save distinct configs for demo and game
+    saveScopedHardwareConfig(demoScope, { ...createFullDemoHardwareConfig(), boardName: 'Demo' }, storage);
+    saveScopedHardwareConfig(gameScope, createGameConfig(), storage);
+
+    // Loading custom project B must NOT receive game's or demo's config
+    const fallback = createFullDemoHardwareConfig();
+    const loadedB = loadScopedHardwareConfig(projectBScope, fallback, projectBPorts, storage);
+    expect(loadedB.source).toBe('default');
+    expect(loadedB.config.boardName).not.toBe('Game Board');
+
+    // Switching top module from `game` to `game_display` must NOT silently reuse `game`'s scoped config
+    const loadedSub = loadScopedHardwareConfig(gameSubScope, fallback, gamePorts, storage);
+    expect(loadedSub.source).toBe('default');
+    expect(loadedSub.config.boardName).not.toBe('Game Board');
+  });
+
+  it('handles invalid signal names deterministically (full mismatch falls back; partial mismatch preserves valid bindings and reports errors)', () => {
+    const storage = createMemoryStorage();
+    const demoFallback = createFullDemoHardwareConfig();
+
+    // 1. Completely incompatible stored config (clk/row/col under demoScope) -> deterministic fallback
+    saveScopedHardwareConfig(demoScope, createGameConfig(), storage);
+    const fullMismatch = loadScopedHardwareConfig(demoScope, demoFallback, demoPorts, storage);
+    expect(fullMismatch.source).toBe('fallback-incompatible');
+    expect(fullMismatch.config.components.find((c) => c.type === 'CLOCK')).toMatchObject({
+      signalName: 'CLOCK_50',
+    });
+
+    // 2. Partially invalid config (clk valid, matrix col typo) -> preserves valid clk binding, reports invalid signal
+    const partialGame = createGameConfig();
+    const mat = partialGame.components.find((c) => c.type === 'MATRIX') as MatrixComponentConfig;
+    mat.col.signalName = 'nonexistent_col';
+    saveScopedHardwareConfig(gameScope, partialGame, storage);
+
+    const partialLoaded = loadScopedHardwareConfig(gameScope, demoFallback, gamePorts, storage);
+    expect(partialLoaded.source).toBe('scoped');
+    const issues = validateHardwareConfig(partialLoaded.config.components, gamePorts);
+    expect(issues.some((i) => i.code === 'MISSING_SIGNAL' && i.message.includes('nonexistent_col'))).toBe(true);
+    expect(issues.some((i) => i.message.includes('"clk"'))).toBe(false);
+  });
+
+  it('migrates compatible legacy v1 localStorage config safely while blocking incompatible legacy leakage', () => {
+    const storage = createMemoryStorage();
+    const demoFallback = createFullDemoHardwareConfig();
+
+    // Simulate pre-fix bug: legacy global key holds game.sv's clk/row/col config
+    saveHardwareConfig(createGameConfig(), storage);
+
+    // Loading default top_fpga_demo MUST reject incompatible legacy config and NOT corrupt demo
+    const demoLoaded = loadScopedHardwareConfig(demoScope, demoFallback, demoPorts, storage);
+    expect(demoLoaded.source).toBe('fallback-incompatible');
+    expect(demoLoaded.config.components.find((c) => c.type === 'CLOCK')).toMatchObject({
+      signalName: 'CLOCK_50',
+    });
+    expect(validateHardwareConfig(demoLoaded.config.components, demoPorts)).toEqual([]);
+
+    // Legacy key is still preserved so when the user loads game.sv, it migrates cleanly!
+    const gameMigrated = loadScopedHardwareConfig(gameScope, demoFallback, gamePorts, storage);
+    expect(gameMigrated.source).toBe('migrated-legacy');
+    expect(gameMigrated.config.boardName).toBe('Game Board');
+    expect(validateHardwareConfig(gameMigrated.config.components, gamePorts)).toEqual([]);
+    expect(storage.getItem(HARDWARE_CONFIG_SCOPED_STORAGE_KEY)).toContain(gameScope);
+  });
+
+  it('resetScopedHardwareConfig clears only the active scope without erasing other projects', () => {
+    const storage = createMemoryStorage();
+    saveScopedHardwareConfig(demoScope, { ...createFullDemoHardwareConfig(), boardName: 'Demo Custom' }, storage);
+    saveScopedHardwareConfig(gameScope, createGameConfig(), storage);
+
+    const resetDemo = resetScopedHardwareConfig(demoScope, createFullDemoHardwareConfig(), storage);
+    expect(resetDemo.boardName).toBe(createFullDemoHardwareConfig().boardName);
+
+    // Game project's saved config remains intact
+    const stillGame = loadScopedHardwareConfig(gameScope, createFullDemoHardwareConfig(), gamePorts, storage);
+    expect(stillGame.source).toBe('scoped');
+    expect(stillGame.config.boardName).toBe('Game Board');
   });
 });
