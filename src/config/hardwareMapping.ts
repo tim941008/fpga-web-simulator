@@ -134,7 +134,12 @@ export function computeInitialInputSignals(
 
   for (const comp of components) {
     if (!comp.enabled) continue;
-    if (comp.type === 'SWITCH') {
+    if (comp.type === 'CLOCK') {
+      const port = portByName.get(comp.signalName);
+      if (port && port.direction === 'input') {
+        result[comp.signalName] = comp.polarity === 'active-low' ? 1n : 0n;
+      }
+    } else if (comp.type === 'SWITCH') {
       const port = portByName.get(comp.signalName);
       if (port && port.direction === 'input') {
         result[comp.signalName] = computeSwitchInitialRawValue(comp);
@@ -223,12 +228,45 @@ export function validateHardwareConfig(
 ): ComponentValidationIssue[] {
   const issues: ComponentValidationIssue[] = [];
   const portByName = new Map(ports.map((p) => [p.name, p]));
+  const inputBindings = new Map<string, string>();
+  let activeClockCount = 0;
+  let activeMatrixCount = 0;
+
+  const checkDuplicateInput = (comp: HardwareComponentConfig, signalName: string) => {
+    const trimmed = signalName.trim();
+    if (!trimmed) return;
+    const prevLabel = inputBindings.get(trimmed);
+    if (prevLabel) {
+      issues.push({
+        componentId: comp.id,
+        componentLabel: comp.label,
+        field: 'signalName',
+        severity: 'warning',
+        code: 'DUPLICATE_INPUT_BINDING',
+        message: `${comp.label} (signalName): input signal "${trimmed}" is already bound by "${prevLabel}". Duplicate input bindings may overwrite each other.`,
+      });
+    } else {
+      inputBindings.set(trimmed, comp.label);
+    }
+  };
 
   for (const comp of components) {
     if (!comp.enabled) continue;
 
     switch (comp.type) {
       case 'CLOCK':
+        activeClockCount += 1;
+        if (activeClockCount > 1) {
+          issues.push({
+            componentId: comp.id,
+            componentLabel: comp.label,
+            field: 'enabled',
+            severity: 'warning',
+            code: 'MULTIPLE_ACTIVE_CLOCKS',
+            message: `${comp.label}: only the first enabled CLOCK drives simulation; additional enabled clocks are ignored.`,
+          });
+        }
+        checkDuplicateInput(comp, comp.signalName);
         validateSignalBinding(
           comp.id,
           comp.label,
@@ -243,6 +281,7 @@ export function validateHardwareConfig(
 
       case 'SWITCH':
       case 'KEY':
+        checkDuplicateInput(comp, comp.signalName);
         validateSignalBinding(
           comp.id,
           comp.label,
@@ -306,6 +345,17 @@ export function validateHardwareConfig(
       }
 
       case 'MATRIX':
+        activeMatrixCount += 1;
+        if (activeMatrixCount > 1) {
+          issues.push({
+            componentId: comp.id,
+            componentLabel: comp.label,
+            field: 'enabled',
+            severity: 'warning',
+            code: 'MULTIPLE_ACTIVE_MATRICES',
+            message: `${comp.label}: only the first enabled MATRIX is displayed on the live board; additional enabled matrices are ignored.`,
+          });
+        }
         validateSignalBinding(
           comp.id,
           comp.label,

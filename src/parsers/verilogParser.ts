@@ -45,7 +45,10 @@ export function evalConstantInt(expr: string, params: Record<string, bigint> = {
 /**
  * Extracts module name, ports, parameters, and internal signals from Verilog (.v) files
  */
-export function parseVerilogSource(sources: string[]): VerilogParseResult {
+export function parseVerilogSource(
+  sources: string[],
+  preferredTopModule?: string
+): VerilogParseResult {
   const combined = stripVerilogComments(sources.join('\n\n'));
   const parameters: Record<string, bigint> = {};
 
@@ -95,7 +98,10 @@ export function parseVerilogSource(sources: string[]): VerilogParseResult {
       }
     }
   }
-  const topMod = modules.find((m) => !instantiated.has(m.name)) ?? modules[0];
+  const topMod =
+    (preferredTopModule ? modules.find((m) => m.name === preferredTopModule) : undefined) ??
+    modules.find((m) => !instantiated.has(m.name)) ??
+    modules[0];
 
   const portsMap = new Map<string, PortDefinition>();
   const internalMap = new Map<string, PortDefinition>();

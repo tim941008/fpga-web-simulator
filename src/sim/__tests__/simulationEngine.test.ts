@@ -163,7 +163,8 @@ describe('SimulationEngine -clock rate mode', () => {
   it('1 Hz advances about one cycle per simulated second', () => {
     const h = harness(0.0001);
     h.engine.start({ kind: 'rate', hz: 1 });
-    h.pump(2500, 0); // 10 s
+    // 400 ticks at 25 ms adaptive delay = ~10 simulated seconds (BUG-15)
+    h.pump(401, 0);
     expect(h.state.counter).toBeGreaterThanOrEqual(9);
     expect(h.state.counter).toBeLessThanOrEqual(11);
   });
@@ -236,7 +237,10 @@ describe('SimulationEngine - real scheduler benchmark (engine overhead only)', (
         },
         onFrame: (s) => {
           last = s;
-          if (s.state === 'finished') resolve();
+          if (s.state === 'finished') {
+            e.dispose();
+            resolve();
+          }
         },
       });
       e.start({ kind: 'batch', cycles: 1_000_000 });
@@ -247,4 +251,74 @@ describe('SimulationEngine - real scheduler benchmark (engine overhead only)', (
     // eslint-disable-next-line no-console
     console.log('[bench] engine overhead: 1M cycles in ' + last.elapsedMs.toFixed(1) + ' ms (' + Math.round(1_000_000 / (last.elapsedMs / 1000)).toLocaleString() + ' cycles/sec, no-op step)');
   }, 30000);
+});
+
+describe('SimulationEngine - BUG-03 & BUG-15 regressions', () => {
+  it('setCycle synchronizes stats().cycle and decrements paused batch remaining (BUG-03)', () => {
+    const slow = harness(0.05); // 256 steps = 12.8ms > 12ms sliceMs -> pauses after 256 cycles
+    slow.engine.start({ kind: 'batch', cycles: 600 });
+    slow.pump(1);
+    slow.engine.pause();
+    const pausedAt = slow.engine.cycle;
+    expect(pausedAt).toBeGreaterThan(0);
+    expect(pausedAt).toBeLessThan(600);
+
+    // Manually step 3 cycles while paused
+    slow.engine.setCycle(pausedAt + 3);
+    expect(slow.engine.stats().cycle).toBe(pausedAt + 3);
+
+    // Resume should only run the remaining cycles to reach 600 total
+    slow.engine.resume();
+    slow.pump();
+    expect(slow.engine.state).toBe('finished');
+    expect(slow.engine.cycle).toBe(600);
+  });
+
+  it('finishes a paused batch when manual stepping consumes all remaining cycles (BUG-03)', () => {
+    const slow = harness(0.05);
+    slow.engine.start({ kind: 'batch', cycles: 400 });
+    slow.pump(1);
+    slow.engine.pause();
+    expect(slow.engine.state).toBe('paused');
+    slow.engine.setCycle(400);
+    expect(slow.engine.state).toBe('finished');
+    expect(slow.engine.stats().state).toBe('finished');
+    expect(slow.engine.stats().cycle).toBe(400);
+  });
+
+  it('uses adaptive timer delay for low-frequency rate mode instead of 4ms spinning (BUG-15)', () => {
+    let clock = 0;
+    const delays: number[] = [];
+    const queue: Array<() => void> = [];
+    const sched: EngineScheduler = {
+      now: () => clock,
+      schedule: (fn, delay) => {
+        delays.push(delay);
+        queue.push(fn);
+      },
+    };
+    const e = new SimulationEngine({ step: () => {} }, { scheduler: sched });
+    e.start({ kind: 'rate', hz: 1 });
+    // First schedule is 0ms (begin), next should be 25ms for 1 Hz
+    queue.shift()?.();
+    expect(delays[delays.length - 1]).toBe(25);
+    e.stop();
+  });
+
+  it('dispose() resets engine state and disposes underlying scheduler (BUG-15)', () => {
+    let disposed = false;
+    const sched: EngineScheduler = {
+      now: () => 0,
+      schedule: () => {},
+      dispose: () => {
+        disposed = true;
+      },
+    };
+    const e = new SimulationEngine({ step: () => {} }, { scheduler: sched });
+    e.start({ kind: 'unlimited' });
+    e.dispose();
+    expect(disposed).toBe(true);
+    expect(e.state).toBe('idle');
+    expect(e.cycle).toBe(0);
+  });
 });

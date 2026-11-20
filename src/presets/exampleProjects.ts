@@ -1,10 +1,9 @@
 /**
- * Multi-file example projects (Phase C.1). All use the standard board port names
- * (CLOCK_50 / KEY / SW / LEDR / HEX0 / MATRIX_ROW / MATRIX_COL) so the default
- * HardwareConfig maps onto them without changes.
+ * Multi-file example projects (Phase C.1). Each example provides a tailored
+ * HardwareConfig matching its exact top-module ports via `createBoardConfigForSignals`.
  */
 import { HardwareConfigSchema } from '../types/hardwareConfig';
-import { createFullDemoHardwareConfig } from '../config/defaultHardwareConfig';
+import { createBoardConfigForSignals } from '../config/defaultHardwareConfig';
 
 export interface ExampleProject {
   id: string;
@@ -31,7 +30,8 @@ export const EXAMPLE_PROJECTS: ExampleProject[] = [
     id: 'ex1-sw-led',
     name: 'Example 1: SW to LED (2 files)',
     topModule: 'top_sw_led',
-    createHardwareConfig: createFullDemoHardwareConfig,
+    createHardwareConfig: () =>
+      createBoardConfigForSignals('Multi-File Example — SW to LED', ['SW', 'LEDR']),
     files: [
       {
         name: 'top_sw_led.v',
@@ -59,7 +59,12 @@ endmodule
     id: 'ex2-counter',
     name: 'Example 2: Counter (2 files)',
     topModule: 'top_counter',
-    createHardwareConfig: createFullDemoHardwareConfig,
+    createHardwareConfig: () =>
+      createBoardConfigForSignals('Multi-File Example — Counter', [
+        'CLOCK_50',
+        'KEY',
+        'LEDR',
+      ]),
     files: [
       {
         name: 'top_counter.v',
@@ -81,7 +86,12 @@ endmodule
     id: 'ex3-sevenseg',
     name: 'Example 3: Seven-Segment Decoder (3 files)',
     topModule: 'top_hex',
-    createHardwareConfig: createFullDemoHardwareConfig,
+    createHardwareConfig: () =>
+      createBoardConfigForSignals('Multi-File Example — Seven-Segment Decoder', [
+        'CLOCK_50',
+        'KEY',
+        'HEX0',
+      ]),
     files: [
       {
         name: 'top_hex.v',
@@ -133,7 +143,13 @@ endmodule
     id: 'ex4-matrix',
     name: 'Example 4: Matrix Demo (3 files)',
     topModule: 'top_matrix',
-    createHardwareConfig: createFullDemoHardwareConfig,
+    createHardwareConfig: () =>
+      createBoardConfigForSignals('Multi-File Example — 16×16 Matrix Demo', [
+        'CLOCK_50',
+        'KEY',
+        'MATRIX_ROW',
+        'MATRIX_COL',
+      ]),
     files: [
       {
         name: 'top_matrix.v',

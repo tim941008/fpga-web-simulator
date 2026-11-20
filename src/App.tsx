@@ -38,9 +38,11 @@ import {
   sampleLiveMatrixIntoBuffer,
 } from './config/matrixMapping';
 import {
-  loadHardwareConfig,
-  resetHardwareConfig,
-  saveHardwareConfig,
+  buildHardwareConfigScopeKey,
+  loadScopedHardwareConfig,
+  ProjectConfigOrigin,
+  resetScopedHardwareConfig,
+  saveScopedHardwareConfig,
 } from './config/configPersistence';
 import { loadUiTheme, saveUiTheme, UiTheme } from './config/uiPreferences';
 import { BackendMode, ClockControls } from './components/ClockControls';
@@ -101,6 +103,10 @@ export const App: React.FC = () => {
 
   // ------------------------------------------------------------------ project (multi-file)
   const [selectedPresetId, setSelectedPresetId] = useState<string>(SAMPLE_PRESETS[0].id);
+  const [projectOrigin, setProjectOrigin] = useState<ProjectConfigOrigin>({
+    kind: 'preset',
+    id: SAMPLE_PRESETS[0].id,
+  });
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>(() => [
     createFile(SAMPLE_PRESETS[0].verilogFilename, SAMPLE_PRESETS[0].verilogCode),
   ]);
@@ -109,19 +115,35 @@ export const App: React.FC = () => {
   const [selectedTop, setSelectedTop] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  // ------------------------------------------------ hardware configuration (persisted)
-  const [hardwareConfig, setHardwareConfig] = useState<HardwareConfigSchema>(() => {
-    const { config } = loadHardwareConfig(SAMPLE_PRESETS[0].createHardwareConfig());
-    return config;
-  });
+  // ------------------------------------------------ hardware configuration (project + top scoped)
+  const initialConfigBootstrap = useMemo(() => {
+    const parsed = parseVerilogSource([SAMPLE_PRESETS[0].verilogCode]);
+    const scopeKey = buildHardwareConfigScopeKey(
+      { kind: 'preset', id: SAMPLE_PRESETS[0].id },
+      [SAMPLE_PRESETS[0].verilogFilename],
+      parsed.topModule
+    );
+    const { config } = loadScopedHardwareConfig(
+      scopeKey,
+      SAMPLE_PRESETS[0].createHardwareConfig(),
+      parsed.ports
+    );
+    return { scopeKey, config };
+  }, []);
 
-  useEffect(() => {
-    saveHardwareConfig(hardwareConfig);
-  }, [hardwareConfig]);
+  const [hardwareConfig, setHardwareConfig] = useState<HardwareConfigSchema>(
+    () => initialConfigBootstrap.config
+  );
+  const loadedScopeKeyRef = useRef<string>(initialConfigBootstrap.scopeKey);
 
   // --------------------------------------------------------------- sim state
   const [activeTab, setActiveTab] = useState<'board' | 'code' | 'config'>('board');
-  const [rateHz, setRateHz] = useState<number>(100); // Infinity = unlimited
+  const [rateHz, setRateHz] = useState<number>(() => {
+    const clk = initialConfigBootstrap.config.components.find(
+      (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+    );
+    return clk && Number.isFinite(clk.defaultHz) && clk.defaultHz > 0 ? clk.defaultHz : 100;
+  }); // Infinity = unlimited
   const [engineStats, setEngineStats] = useState<EngineStats>(IDLE_STATS);
   const [batchActive, setBatchActive] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
@@ -142,6 +164,9 @@ export const App: React.FC = () => {
   const cycleRef = useRef(0);
   const clockLevelRef = useRef<0 | 1>(0);
   const matrixRef = useRef<number[][]>(createEmptyMatrixBuffer());
+  const lastMatrixSampleAtRef = useRef<number>(
+    typeof performance !== 'undefined' ? performance.now() : Date.now()
+  );
   const compileSeq = useRef(0);
   const wasmCachedRef = useRef(false);
   const debounceCompileRef = useRef(false);
@@ -171,12 +196,58 @@ export const App: React.FC = () => {
   );
 
   const verilogParsed = useMemo(
-    () => parseVerilogSource(verilogOnlyContents),
-    [verilogOnlyContents]
+    () => parseVerilogSource(verilogOnlyContents, topModule),
+    [verilogOnlyContents, topModule]
   );
 
   // Ports reported by Verilator are authoritative; fall back to the parser before first compile
   const ports = runtimePorts ?? verilogParsed.ports;
+
+  // Scoped hardware config key isolated per (project origin + files + active topModule)
+  const configScopeKey = useMemo(
+    () =>
+      buildHardwareConfigScopeKey(
+        projectOrigin,
+        projectFiles.map((f) => f.name),
+        topModule
+      ),
+    [projectOrigin, projectFiles, topModule]
+  );
+
+  const getDefaultConfigForOrigin = useCallback((): HardwareConfigSchema => {
+    if (projectOrigin.kind === 'preset') {
+      const preset =
+        SAMPLE_PRESETS.find((p) => p.id === projectOrigin.id) ?? SAMPLE_PRESETS[0];
+      return preset.createHardwareConfig();
+    }
+    if (projectOrigin.kind === 'example') {
+      const ex = EXAMPLE_PROJECTS.find((x) => x.id === projectOrigin.id);
+      if (ex) return ex.createHardwareConfig();
+    }
+    return SAMPLE_PRESETS[0].createHardwareConfig();
+  }, [projectOrigin]);
+
+  // Switch hardwareConfig whenever the active project or top module scope changes
+  useEffect(() => {
+    if (loadedScopeKeyRef.current === configScopeKey) return;
+    const fallback = getDefaultConfigForOrigin();
+    const { config } = loadScopedHardwareConfig(configScopeKey, fallback, ports);
+    loadedScopeKeyRef.current = configScopeKey;
+    setHardwareConfig(config);
+    const clk = config.components.find(
+      (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+    );
+    if (clk && Number.isFinite(clk.defaultHz) && clk.defaultHz > 0) {
+      setRateHz(clk.defaultHz);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configScopeKey]);
+
+  // Persist edits only when hardwareConfig belongs to the active scopeKey
+  useEffect(() => {
+    if (loadedScopeKeyRef.current !== configScopeKey) return;
+    saveScopedHardwareConfig(configScopeKey, hardwareConfig);
+  }, [configScopeKey, hardwareConfig]);
 
   const validationIssues = useMemo(
     () => validateHardwareConfig(hardwareConfig.components, ports),
@@ -206,6 +277,16 @@ export const App: React.FC = () => {
       ) ?? null,
     [hardwareConfig.components]
   );
+
+  const clockPolarity: 'active-high' | 'active-low' =
+    activeClockConfig?.polarity ?? 'active-high';
+  const clockPolarityRef = useRef<'active-high' | 'active-low'>(clockPolarity);
+  clockPolarityRef.current = clockPolarity;
+
+  const clkNameRef = useRef<string | null>(clkName);
+  clkNameRef.current = clkName;
+  const activeMatrixConfigRef = useRef<MatrixComponentConfig | null>(activeMatrixConfig);
+  activeMatrixConfigRef.current = activeMatrixConfig;
 
   const isMatrixConnected = useMemo(() => {
     if (!activeMatrixConfig) return false;
@@ -282,15 +363,16 @@ export const App: React.FC = () => {
     setEngineStats(s);
     if (s.state !== 'running' && s.state !== 'paused') setBatchActive(false);
     if (!rt) return;
+    const idleLevel: 0 | 1 = clockPolarityRef.current === 'active-low' ? 1 : 0;
     cycleRef.current = s.cycle;
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     setCycleCount(s.cycle);
     setSignals(sig);
-    pushHistory([{ cycle: s.cycle, halfCycle: 0, values: sig }]);
+    pushHistory([{ cycle: s.cycle, halfCycle: idleLevel, values: sig }]);
   };
 
   errorRef.current = (e: unknown) => {
@@ -301,31 +383,45 @@ export const App: React.FC = () => {
     ]);
   };
 
-  useEffect(() => () => engine.reset(), [engine]);
+  useEffect(() => () => engine.dispose(), [engine]);
+
+  // Keep stepRef in sync if the active clock signal or polarity changes while running or paused (BUG-03, BUG-04)
+  useEffect(() => {
+    const rt = runtimeRef.current;
+    if (rt && clkName) {
+      stepRef.current = rt.makeCycleStepper(clkName, clockPolarity);
+    }
+  }, [clkName, clockPolarity]);
 
   const startRun = (mode: RunMode) => {
     const rt = runtimeRef.current;
-    if (!rt || !clkName) return;
-    if (clockLevelRef.current === 1) {
-      rt.stepEdge(clkName, 0);
-      clockLevelRef.current = 0;
+    const activeClk = clkNameRef.current;
+    if (!rt || !activeClk) return;
+    const polarity = clockPolarityRef.current;
+    const idleLevel: 0 | 1 = polarity === 'active-low' ? 1 : 0;
+    if (clockLevelRef.current !== idleLevel) {
+      rt.stepEdge(activeClk, idleLevel);
+      clockLevelRef.current = idleLevel;
     }
-    stepRef.current = rt.makeCycleStepper(clkName);
-    // Live matrix: sample row/col only (cheap) every few cycles instead of snapshotting all signals.
-    const mc = activeMatrixConfig;
-    if (mc && mc.displayMode !== 'pattern') {
-      const rowName = mc.row.signalName;
-      const colName = mc.col.signalName;
-      sampleRef.current = () =>
-        sampleLiveMatrixIntoBuffer(
-          matrixRef.current,
-          rt.readSignal(rowName),
-          rt.readSignal(colName),
-          mc
-        );
-    } else {
-      sampleRef.current = () => {};
-    }
+    stepRef.current = rt.makeCycleStepper(activeClk, polarity);
+    // Live matrix: read activeMatrixConfigRef dynamically so mid-run config edits take effect immediately (BUG-03)
+    // Pass elapsed dtMs for frequency-independent POV decay (BUG-14)
+    lastMatrixSampleAtRef.current =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
+    sampleRef.current = () => {
+      const mc = activeMatrixConfigRef.current;
+      if (!mc || mc.displayMode === 'pattern') return;
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const dtMs = Math.max(0, now - lastMatrixSampleAtRef.current);
+      lastMatrixSampleAtRef.current = now;
+      sampleLiveMatrixIntoBuffer(
+        matrixRef.current,
+        rt.readSignal(mc.row.signalName),
+        rt.readSignal(mc.col.signalName),
+        mc,
+        dtMs
+      );
+    };
     engine.reset(cycleRef.current);
     setBatchActive(mode.kind === 'batch');
     engine.start(mode);
@@ -413,13 +509,17 @@ export const App: React.FC = () => {
     }
     rt.eval();
 
+    const initClk = hardwareConfigRef.current.components.find(
+      (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+    );
+    const idleLevel: 0 | 1 = initClk?.polarity === 'active-low' ? 1 : 0;
     cycleRef.current = 0;
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     setCycleCount(0);
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     const sig = rt.getSignals();
     setSignals(sig);
-    setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
+    setHistory([{ cycle: 0, halfCycle: idleLevel, values: sig }]);
     matrixRef.current = createEmptyMatrixBuffer();
     const matrixCfg =
       hardwareConfigRef.current.components.find(
@@ -441,12 +541,16 @@ export const App: React.FC = () => {
   const stepHalfCycle = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
+    const activeLevel: 0 | 1 = clockPolarityRef.current === 'active-low' ? 0 : 1;
     const next: 0 | 1 = clockLevelRef.current === 0 ? 1 : 0;
     if (clkName) rt.stepEdge(clkName, next);
     else rt.eval();
     clockLevelRef.current = next;
-    if (next === 1) cycleRef.current += 1;
+    if (next === activeLevel) cycleRef.current += 1;
     engine.setCycle(cycleRef.current);
+    const nextStats = engine.stats();
+    setEngineStats(nextStats);
+    if (nextStats.state !== 'running' && nextStats.state !== 'paused') setBatchActive(false);
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
@@ -459,26 +563,32 @@ export const App: React.FC = () => {
   const stepFullCycle = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
+    const polarity = clockPolarityRef.current;
+    const activeLevel: 0 | 1 = polarity === 'active-low' ? 0 : 1;
+    const idleLevel: 0 | 1 = polarity === 'active-low' ? 1 : 0;
     if (clkName) {
-      if (clockLevelRef.current === 1) rt.stepEdge(clkName, 0);
-      rt.stepEdge(clkName, 1);
+      if (clockLevelRef.current !== idleLevel) rt.stepEdge(clkName, idleLevel);
+      rt.stepEdge(clkName, activeLevel);
       cycleRef.current += 1;
       const hi = rt.getSignals();
       sampleMatrix(hi);
-      rt.stepEdge(clkName, 0);
+      rt.stepEdge(clkName, idleLevel);
     } else {
       rt.eval();
       cycleRef.current += 1;
     }
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     engine.setCycle(cycleRef.current);
+    const nextStats = engine.stats();
+    setEngineStats(nextStats);
+    if (nextStats.state !== 'running' && nextStats.state !== 'paused') setBatchActive(false);
     const lo = rt.getSignals();
     sampleMatrix(lo);
     publishMatrix();
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     setCycleCount(cycleRef.current);
     setSignals(lo);
-    pushHistory([{ cycle: cycleRef.current, halfCycle: 0, values: lo }]);
+    pushHistory([{ cycle: cycleRef.current, halfCycle: idleLevel, values: lo }]);
   };
 
   // ------------------------------------------------------------- inputs
@@ -520,13 +630,14 @@ export const App: React.FC = () => {
       rt.ports
     );
     rt.reset(initialInputs);
+    const idleLevel: 0 | 1 = clockPolarityRef.current === 'active-low' ? 1 : 0;
     cycleRef.current = 0;
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     const sig = rt.getSignals();
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     setCycleCount(0);
     setSignals(sig);
-    setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
+    setHistory([{ cycle: 0, halfCycle: idleLevel, values: sig }]);
     matrixRef.current = createEmptyMatrixBuffer();
     sampleMatrix(sig);
     publishMatrix();
@@ -548,6 +659,7 @@ export const App: React.FC = () => {
     debounceCompileRef.current = false;
     setRuntimePorts(null);
     if (mode === 'replace') {
+      setProjectOrigin({ kind: 'custom' });
       setProjectFiles(entries.map((e) => createFile(e.name, e.content)));
       setSelectedTop(null);
       setActiveFileId(null);
@@ -602,9 +714,8 @@ export const App: React.FC = () => {
   };
 
   const handleRestoreDefaultConfig = () => {
-    const preset =
-      SAMPLE_PRESETS.find((p) => p.id === selectedPresetId) ?? SAMPLE_PRESETS[0];
-    const restored = resetHardwareConfig(preset.createHardwareConfig());
+    const restored = resetScopedHardwareConfig(configScopeKey, getDefaultConfigForOrigin());
+    loadedScopeKeyRef.current = configScopeKey;
     setHardwareConfig(restored);
   };
 
@@ -653,7 +764,7 @@ export const App: React.FC = () => {
             }`}
           >
             <UploadCloud className="w-8 h-8" />
-            Drop .v / .sv files, a folder or a .zip to load the project
+            {t.dropProjectHint}
           </div>
         </div>
       )}
@@ -694,7 +805,7 @@ export const App: React.FC = () => {
                       : 'bg-slate-800 text-slate-300 border-slate-700'
                   }`}
                 >
-                  Digital Logic Workbench
+                  {t.workbenchBadge}
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
@@ -714,17 +825,17 @@ export const App: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Preset Selector */}
             <select
-              value={selectedPresetId}
+              value={projectOrigin.kind === 'preset' ? selectedPresetId : ''}
               onChange={(e) => {
                 const preset = SAMPLE_PRESETS.find((p) => p.id === e.target.value);
                 if (preset) {
                   setSelectedPresetId(preset.id);
+                  setProjectOrigin({ kind: 'preset', id: preset.id });
                   debounceCompileRef.current = false;
                   setRuntimePorts(null);
                   setActiveFileId(null);
                   setSelectedTop(null);
                   setProjectFiles([createFile(preset.verilogFilename, preset.verilogCode)]);
-                  setHardwareConfig(preset.createHardwareConfig());
                 }
               }}
               className={`bg-slate-950 border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none transition ${
@@ -733,6 +844,11 @@ export const App: React.FC = () => {
                   : 'border-indigo-500/35 hover:border-indigo-400/60 focus:border-emerald-400'
               }`}
             >
+              {projectOrigin.kind !== 'preset' && (
+                <option value="" disabled>
+                  {t.presetLabel} —
+                </option>
+              )}
               {SAMPLE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
                   {t.presetLabel} {p.name}
@@ -742,16 +858,16 @@ export const App: React.FC = () => {
 
             {/* Multi-file example projects */}
             <select
-              value=""
+              value={projectOrigin.kind === 'example' ? projectOrigin.id : ''}
               onChange={(e) => {
                 const ex = EXAMPLE_PROJECTS.find((x) => x.id === e.target.value);
                 if (!ex) return;
+                setProjectOrigin({ kind: 'example', id: ex.id });
                 debounceCompileRef.current = false;
                 setRuntimePorts(null);
                 setActiveFileId(null);
                 setProjectFiles(ex.files.map((f) => createFile(f.name, f.content)));
                 setSelectedTop(ex.topModule);
-                setHardwareConfig(ex.createHardwareConfig());
               }}
               className={`bg-slate-950 border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none transition ${
                 isWarm
@@ -759,7 +875,7 @@ export const App: React.FC = () => {
                   : 'border-indigo-500/35 hover:border-indigo-400/60 focus:border-emerald-400'
               }`}
             >
-              <option value="">Multi-file examples...</option>
+              <option value="">{t.multiFileExamplesPlaceholder}</option>
               {EXAMPLE_PROJECTS.map((x) => (
                 <option key={x.id} value={x.id}>
                   {x.name}
@@ -772,6 +888,8 @@ export const App: React.FC = () => {
               modules={scannedModules}
               topCandidates={topCandidates}
               invalid={topInvalid}
+              theme={uiTheme}
+              t={t}
               onChange={setSelectedTop}
             />
 
@@ -794,7 +912,7 @@ export const App: React.FC = () => {
             </label>
             <label className={uploadBtn} title="Upload a whole project folder">
               <FolderOpen className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
-              <span>Folder</span>
+              <span>{t.folderBtn}</span>
               <input
                 type="file"
                 multiple
@@ -808,7 +926,7 @@ export const App: React.FC = () => {
             </label>
             <label className={uploadBtn} title="Upload a project .zip">
               <FileArchive className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
-              <span>ZIP</span>
+              <span>{t.zipBtn}</span>
               <input
                 type="file"
                 accept=".zip"
@@ -832,7 +950,7 @@ export const App: React.FC = () => {
               }`}
             >
               <Palette className={`w-3.5 h-3.5 ${isWarm ? 'text-orange-300' : 'text-emerald-300'}`} />
-              <span>{isWarm ? 'FPGA Lab' : 'Classic'}</span>
+              <span>{isWarm ? t.themeWarmLab : t.themeClassic}</span>
             </button>
 
             {/* Language Switcher (EN / 繁體中文) */}
@@ -1027,6 +1145,7 @@ export const App: React.FC = () => {
                   colValue={signals[activeMatrixConfig.col.signalName] ?? 0n}
                   isConnected={isMatrixConnected}
                   t={t}
+                  theme={uiTheme}
                   onUpdateConfig={handleUpdateMatrixConfig}
                   onClearBuffer={clearMatrix}
                 />
@@ -1041,6 +1160,7 @@ export const App: React.FC = () => {
             ports={ports}
             validationIssues={validationIssues}
             t={t}
+            theme={uiTheme}
             onChangeConfig={setHardwareConfig}
             onRestoreDefaults={handleRestoreDefaultConfig}
           />
@@ -1060,6 +1180,8 @@ export const App: React.FC = () => {
                 activeFileId={activeFile?.id ?? null}
                 topModule={topModule}
                 topCandidates={topCandidates}
+                theme={uiTheme}
+                t={t}
                 onSelectFile={setActiveFileId}
                 onRename={handleRename}
                 onDelete={handleDeleteFile}
