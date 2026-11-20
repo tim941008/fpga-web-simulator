@@ -359,24 +359,57 @@ export const BoardView: React.FC<BoardViewProps> = ({
                           <div key={bitIdx} className="flex flex-col items-center">
                             <button
                               type="button"
-                              onMouseDown={() => {
+                              aria-pressed={pressed}
+                              onPointerDown={(e) => {
+                                if (comp.behavior === 'momentary') {
+                                  try {
+                                    e.currentTarget.setPointerCapture(e.pointerId);
+                                  } catch {
+                                    // ignore pointer capture failures in synthetic environments
+                                  }
+                                  onSetInputBit(comp.signalName, bitIdx, pressedRaw);
+                                } else {
+                                  onToggleInputBit(comp.signalName, bitIdx);
+                                }
+                              }}
+                              onPointerUp={() => {
+                                if (comp.behavior === 'momentary') {
+                                  onSetInputBit(comp.signalName, bitIdx, releasedRaw);
+                                }
+                              }}
+                              onPointerCancel={() => {
+                                if (comp.behavior === 'momentary' && pressed) {
+                                  onSetInputBit(comp.signalName, bitIdx, releasedRaw);
+                                }
+                              }}
+                              onLostPointerCapture={() => {
+                                if (comp.behavior === 'momentary' && pressed) {
+                                  onSetInputBit(comp.signalName, bitIdx, releasedRaw);
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key !== ' ' && e.key !== 'Enter') return;
+                                e.preventDefault();
+                                if (e.repeat) return;
                                 if (comp.behavior === 'momentary') {
                                   onSetInputBit(comp.signalName, bitIdx, pressedRaw);
                                 } else {
                                   onToggleInputBit(comp.signalName, bitIdx);
                                 }
                               }}
-                              onMouseUp={() => {
+                              onKeyUp={(e) => {
+                                if (e.key !== ' ' && e.key !== 'Enter') return;
+                                e.preventDefault();
                                 if (comp.behavior === 'momentary') {
                                   onSetInputBit(comp.signalName, bitIdx, releasedRaw);
                                 }
                               }}
-                              onMouseLeave={() => {
+                              onBlur={() => {
                                 if (comp.behavior === 'momentary' && pressed) {
                                   onSetInputBit(comp.signalName, bitIdx, releasedRaw);
                                 }
                               }}
-                              className={`w-12 h-12 rounded-xl border-2 flex items-center justify-center transition transform ${
+                              className={`w-12 h-12 rounded-xl border-2 flex items-center justify-center transition transform touch-none select-none ${
                                 pressed
                                   ? 'bg-amber-500 border-amber-200 scale-95 shadow-[0_0_14px_#f59e0b]'
                                   : 'bg-slate-800 border-slate-600 hover:border-amber-400/60'

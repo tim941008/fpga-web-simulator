@@ -100,18 +100,38 @@ export function evaluateMatrixPixel(
   };
 }
 
+export const DEFAULT_POV_HALF_LIFE_MS = 120;
+
+/**
+ * Computes an exponential time-based POV decay factor for elapsed time `dtMs`.
+ * Keeps matrix persistence visually consistent regardless of simulation frequency (BUG-14).
+ */
+export function computePovDecayFactor(
+  dtMs: number,
+  halfLifeMs: number = DEFAULT_POV_HALF_LIFE_MS
+): number {
+  if (!Number.isFinite(dtMs) || dtMs <= 0) return 1;
+  if (!Number.isFinite(halfLifeMs) || halfLifeMs <= 0) return 0;
+  return Math.pow(0.5, dtMs / halfLifeMs);
+}
+
 /**
  * Samples live Verilog ROW/COL signals into a 16x16 intensity buffer in place.
  * Does not mutate `signals`.
+ * When `dtMs` is supplied, POV decay uses exponential time-based decay; when omitted,
+ * falls back to the legacy per-step factor (0.96) for deterministic single-step sampling.
  */
 export function sampleLiveMatrixIntoBuffer(
   buffer: number[][],
   rowSignalValue: bigint,
   colSignalValue: bigint,
-  config: MatrixComponentConfig
+  config: MatrixComponentConfig,
+  dtMs?: number
 ): void {
   const rowWidth = Math.max(1, Math.min(MATRIX_SIZE, config.row.width));
   const colWidth = Math.max(1, Math.min(MATRIX_SIZE, config.col.width));
+  const inactiveRowDecay = dtMs === undefined ? 0.96 : computePovDecayFactor(dtMs);
+  const inactiveColDecay = dtMs === undefined ? 0.5 : computePovDecayFactor(dtMs, DEFAULT_POV_HALF_LIFE_MS / 2);
 
   for (let r = 0; r < MATRIX_SIZE; r++) {
     if (r >= rowWidth) {
@@ -126,7 +146,7 @@ export function sampleLiveMatrixIntoBuffer(
       if (!config.povEnabled) {
         for (let c = 0; c < MATRIX_SIZE; c++) buffer[r][c] = 0;
       } else {
-        for (let c = 0; c < MATRIX_SIZE; c++) buffer[r][c] *= 0.96;
+        for (let c = 0; c < MATRIX_SIZE; c++) buffer[r][c] *= inactiveRowDecay;
       }
       continue;
     }
@@ -141,7 +161,7 @@ export function sampleLiveMatrixIntoBuffer(
       if (colActive) {
         buffer[r][c] = 1;
       } else {
-        buffer[r][c] = config.povEnabled ? buffer[r][c] * 0.5 : 0;
+        buffer[r][c] = config.povEnabled ? buffer[r][c] * inactiveColDecay : 0;
       }
     }
   }

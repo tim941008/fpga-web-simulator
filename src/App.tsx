@@ -164,6 +164,9 @@ export const App: React.FC = () => {
   const cycleRef = useRef(0);
   const clockLevelRef = useRef<0 | 1>(0);
   const matrixRef = useRef<number[][]>(createEmptyMatrixBuffer());
+  const lastMatrixSampleAtRef = useRef<number>(
+    typeof performance !== 'undefined' ? performance.now() : Date.now()
+  );
   const compileSeq = useRef(0);
   const wasmCachedRef = useRef(false);
   const debounceCompileRef = useRef(false);
@@ -402,14 +405,21 @@ export const App: React.FC = () => {
     }
     stepRef.current = rt.makeCycleStepper(activeClk, polarity);
     // Live matrix: read activeMatrixConfigRef dynamically so mid-run config edits take effect immediately (BUG-03)
+    // Pass elapsed dtMs for frequency-independent POV decay (BUG-14)
+    lastMatrixSampleAtRef.current =
+      typeof performance !== 'undefined' ? performance.now() : Date.now();
     sampleRef.current = () => {
       const mc = activeMatrixConfigRef.current;
       if (!mc || mc.displayMode === 'pattern') return;
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const dtMs = Math.max(0, now - lastMatrixSampleAtRef.current);
+      lastMatrixSampleAtRef.current = now;
       sampleLiveMatrixIntoBuffer(
         matrixRef.current,
         rt.readSignal(mc.row.signalName),
         rt.readSignal(mc.col.signalName),
-        mc
+        mc,
+        dtMs
       );
     };
     engine.reset(cycleRef.current);

@@ -20,6 +20,7 @@ import {
   validateHardwareConfig,
 } from '../hardwareMapping';
 import {
+  computePovDecayFactor,
   createDefaultMatrixPattern,
   createEmptyMatrixBuffer,
   DEFAULT_MATRIX_PATTERN,
@@ -884,5 +885,28 @@ describe('9. Validation & Strict Persistence Guards (BUG-08, BUG-09, BUG-10)', (
 
     // Valid default config still parses cleanly
     expect(parseStoredHardwareConfig(base)).not.toBeNull();
+  });
+
+  it('decays matrix POV consistently over wall time regardless of sampling frequency (BUG-14)', () => {
+    expect(computePovDecayFactor(0, 120)).toBe(1);
+    expect(computePovDecayFactor(120, 120)).toBeCloseTo(0.5, 5);
+
+    const matrixCfg = createFullDemoHardwareConfig().components.find(
+      (c): c is MatrixComponentConfig => c.type === 'MATRIX'
+    )!;
+    // Simulate 120ms elapsed at 10 Hz (1 sample of 120ms) vs 1 kHz (120 samples of 1ms)
+    const bufSlow = createEmptyMatrixBuffer();
+    const bufFast = createEmptyMatrixBuffer();
+    bufSlow[0][0] = 1;
+    bufFast[0][0] = 1;
+
+    sampleLiveMatrixIntoBuffer(bufSlow, 0n, 0n, matrixCfg, 120);
+    for (let i = 0; i < 120; i++) {
+      sampleLiveMatrixIntoBuffer(bufFast, 0n, 0n, matrixCfg, 1);
+    }
+
+    expect(bufSlow[0][0]).toBeCloseTo(0.5, 4);
+    expect(bufFast[0][0]).toBeCloseTo(0.5, 4);
+    expect(Math.abs(bufSlow[0][0] - bufFast[0][0])).toBeLessThan(1e-6);
   });
 });
