@@ -264,6 +264,11 @@ export const App: React.FC = () => {
     [hardwareConfig.components]
   );
 
+  const clkNameRef = useRef<string | null>(clkName);
+  clkNameRef.current = clkName;
+  const activeMatrixConfigRef = useRef<MatrixComponentConfig | null>(activeMatrixConfig);
+  activeMatrixConfigRef.current = activeMatrixConfig;
+
   const isMatrixConnected = useMemo(() => {
     if (!activeMatrixConfig) return false;
     const hasRow = ports.some((p) => p.name === activeMatrixConfig.row.signalName);
@@ -358,31 +363,36 @@ export const App: React.FC = () => {
     ]);
   };
 
-  useEffect(() => () => engine.reset(), [engine]);
+  useEffect(() => () => engine.dispose(), [engine]);
+
+  // Keep stepRef in sync if the active clock signal changes while running or paused (BUG-03)
+  useEffect(() => {
+    const rt = runtimeRef.current;
+    if (rt && clkName) {
+      stepRef.current = rt.makeCycleStepper(clkName);
+    }
+  }, [clkName]);
 
   const startRun = (mode: RunMode) => {
     const rt = runtimeRef.current;
-    if (!rt || !clkName) return;
+    const activeClk = clkNameRef.current;
+    if (!rt || !activeClk) return;
     if (clockLevelRef.current === 1) {
-      rt.stepEdge(clkName, 0);
+      rt.stepEdge(activeClk, 0);
       clockLevelRef.current = 0;
     }
-    stepRef.current = rt.makeCycleStepper(clkName);
-    // Live matrix: sample row/col only (cheap) every few cycles instead of snapshotting all signals.
-    const mc = activeMatrixConfig;
-    if (mc && mc.displayMode !== 'pattern') {
-      const rowName = mc.row.signalName;
-      const colName = mc.col.signalName;
-      sampleRef.current = () =>
-        sampleLiveMatrixIntoBuffer(
-          matrixRef.current,
-          rt.readSignal(rowName),
-          rt.readSignal(colName),
-          mc
-        );
-    } else {
-      sampleRef.current = () => {};
-    }
+    stepRef.current = rt.makeCycleStepper(activeClk);
+    // Live matrix: read activeMatrixConfigRef dynamically so mid-run config edits take effect immediately (BUG-03)
+    sampleRef.current = () => {
+      const mc = activeMatrixConfigRef.current;
+      if (!mc || mc.displayMode === 'pattern') return;
+      sampleLiveMatrixIntoBuffer(
+        matrixRef.current,
+        rt.readSignal(mc.row.signalName),
+        rt.readSignal(mc.col.signalName),
+        mc
+      );
+    };
     engine.reset(cycleRef.current);
     setBatchActive(mode.kind === 'batch');
     engine.start(mode);
@@ -504,6 +514,9 @@ export const App: React.FC = () => {
     clockLevelRef.current = next;
     if (next === 1) cycleRef.current += 1;
     engine.setCycle(cycleRef.current);
+    const nextStats = engine.stats();
+    setEngineStats(nextStats);
+    if (nextStats.state !== 'running' && nextStats.state !== 'paused') setBatchActive(false);
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
@@ -529,6 +542,9 @@ export const App: React.FC = () => {
     }
     clockLevelRef.current = 0;
     engine.setCycle(cycleRef.current);
+    const nextStats = engine.stats();
+    setEngineStats(nextStats);
+    if (nextStats.state !== 'running' && nextStats.state !== 'paused') setBatchActive(false);
     const lo = rt.getSignals();
     sampleMatrix(lo);
     publishMatrix();

@@ -28,6 +28,8 @@ export interface EngineScheduler {
   now(): number;
   /** Run `fn` later. delayMs === 0 means "yield to the event loop, then run ASAP". */
   schedule(fn: () => void, delayMs: number): void;
+  /** Release any underlying resources (e.g. MessageChannel ports). */
+  dispose?(): void;
 }
 
 export interface EngineHooks {
@@ -68,6 +70,15 @@ const defaultScheduler = (): EngineScheduler => {
       else {
         queue.push(fn);
         channel.port2.postMessage(0);
+      }
+    },
+    dispose() {
+      queue.length = 0;
+      if (channel) {
+        channel.port1.onmessage = null;
+        channel.port1.close();
+        channel.port2.close();
+        channel = null;
       }
     },
   };
@@ -117,7 +128,20 @@ export class SimulationEngine {
 
   /** Set the cycle counter (e.g. after reset or manual stepping). Does not run anything. */
   setCycle(n: number): void {
+    const delta = n - this._cycle;
     this._cycle = n;
+    if (this._state === 'paused' && this.mode?.kind === 'batch' && delta > 0) {
+      this.remaining = Math.max(0, this.remaining - delta);
+      if (this.remaining === 0) {
+        this._state = 'finished';
+      }
+    }
+  }
+
+  /** Reset counters, invalidate scheduled ticks, and release scheduler resources. */
+  dispose(): void {
+    this.reset();
+    this.sched.dispose?.();
   }
 
   /** Reset counters and stop. */
@@ -299,7 +323,11 @@ export class SimulationEngine {
     this.updateCps(false);
     if (now - this.lastFrameAt >= this.frameMs) this.emitFrame();
 
-    this.scheduleTick(mode.kind === 'rate' ? 4 : 0);
+    const nextDelay =
+      mode.kind === 'rate'
+        ? Math.min(25, Math.max(4, Math.floor(500 / Math.max(mode.hz, 0.1))))
+        : 0;
+    this.scheduleTick(nextDelay);
   }
 
 

@@ -265,7 +265,7 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
             <button
               key={n}
               type="button"
-              disabled={!ready || !hasClock || running || batchRunning}
+              disabled={!ready || !hasClock || running || paused || batchRunning}
               onClick={() => onRunBatch(n)}
               title={`Run ${formatCount(n)} cycles, update outputs when done`}
               className={`px-1.5 py-1 rounded-md text-[10px] font-mono bg-slate-900 disabled:opacity-40 text-slate-200 border ${
