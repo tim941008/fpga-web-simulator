@@ -138,7 +138,12 @@ export const App: React.FC = () => {
 
   // --------------------------------------------------------------- sim state
   const [activeTab, setActiveTab] = useState<'board' | 'code' | 'config'>('board');
-  const [rateHz, setRateHz] = useState<number>(100); // Infinity = unlimited
+  const [rateHz, setRateHz] = useState<number>(() => {
+    const clk = initialConfigBootstrap.config.components.find(
+      (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+    );
+    return clk && Number.isFinite(clk.defaultHz) && clk.defaultHz > 0 ? clk.defaultHz : 100;
+  }); // Infinity = unlimited
   const [engineStats, setEngineStats] = useState<EngineStats>(IDLE_STATS);
   const [batchActive, setBatchActive] = useState(false);
   const [cycleCount, setCycleCount] = useState(0);
@@ -226,6 +231,12 @@ export const App: React.FC = () => {
     const { config } = loadScopedHardwareConfig(configScopeKey, fallback, ports);
     loadedScopeKeyRef.current = configScopeKey;
     setHardwareConfig(config);
+    const clk = config.components.find(
+      (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+    );
+    if (clk && Number.isFinite(clk.defaultHz) && clk.defaultHz > 0) {
+      setRateHz(clk.defaultHz);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configScopeKey]);
 
@@ -263,6 +274,11 @@ export const App: React.FC = () => {
       ) ?? null,
     [hardwareConfig.components]
   );
+
+  const clockPolarity: 'active-high' | 'active-low' =
+    activeClockConfig?.polarity ?? 'active-high';
+  const clockPolarityRef = useRef<'active-high' | 'active-low'>(clockPolarity);
+  clockPolarityRef.current = clockPolarity;
 
   const clkNameRef = useRef<string | null>(clkName);
   clkNameRef.current = clkName;
@@ -344,15 +360,16 @@ export const App: React.FC = () => {
     setEngineStats(s);
     if (s.state !== 'running' && s.state !== 'paused') setBatchActive(false);
     if (!rt) return;
+    const idleLevel: 0 | 1 = clockPolarityRef.current === 'active-low' ? 1 : 0;
     cycleRef.current = s.cycle;
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     setCycleCount(s.cycle);
     setSignals(sig);
-    pushHistory([{ cycle: s.cycle, halfCycle: 0, values: sig }]);
+    pushHistory([{ cycle: s.cycle, halfCycle: idleLevel, values: sig }]);
   };
 
   errorRef.current = (e: unknown) => {
@@ -365,23 +382,25 @@ export const App: React.FC = () => {
 
   useEffect(() => () => engine.dispose(), [engine]);
 
-  // Keep stepRef in sync if the active clock signal changes while running or paused (BUG-03)
+  // Keep stepRef in sync if the active clock signal or polarity changes while running or paused (BUG-03, BUG-04)
   useEffect(() => {
     const rt = runtimeRef.current;
     if (rt && clkName) {
-      stepRef.current = rt.makeCycleStepper(clkName);
+      stepRef.current = rt.makeCycleStepper(clkName, clockPolarity);
     }
-  }, [clkName]);
+  }, [clkName, clockPolarity]);
 
   const startRun = (mode: RunMode) => {
     const rt = runtimeRef.current;
     const activeClk = clkNameRef.current;
     if (!rt || !activeClk) return;
-    if (clockLevelRef.current === 1) {
-      rt.stepEdge(activeClk, 0);
-      clockLevelRef.current = 0;
+    const polarity = clockPolarityRef.current;
+    const idleLevel: 0 | 1 = polarity === 'active-low' ? 1 : 0;
+    if (clockLevelRef.current !== idleLevel) {
+      rt.stepEdge(activeClk, idleLevel);
+      clockLevelRef.current = idleLevel;
     }
-    stepRef.current = rt.makeCycleStepper(activeClk);
+    stepRef.current = rt.makeCycleStepper(activeClk, polarity);
     // Live matrix: read activeMatrixConfigRef dynamically so mid-run config edits take effect immediately (BUG-03)
     sampleRef.current = () => {
       const mc = activeMatrixConfigRef.current;
@@ -480,13 +499,17 @@ export const App: React.FC = () => {
     }
     rt.eval();
 
+    const initClk = hardwareConfigRef.current.components.find(
+      (c): c is ClockComponentConfig => c.enabled && c.type === 'CLOCK'
+    );
+    const idleLevel: 0 | 1 = initClk?.polarity === 'active-low' ? 1 : 0;
     cycleRef.current = 0;
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     setCycleCount(0);
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     const sig = rt.getSignals();
     setSignals(sig);
-    setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
+    setHistory([{ cycle: 0, halfCycle: idleLevel, values: sig }]);
     matrixRef.current = createEmptyMatrixBuffer();
     const matrixCfg =
       hardwareConfigRef.current.components.find(
@@ -508,11 +531,12 @@ export const App: React.FC = () => {
   const stepHalfCycle = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
+    const activeLevel: 0 | 1 = clockPolarityRef.current === 'active-low' ? 0 : 1;
     const next: 0 | 1 = clockLevelRef.current === 0 ? 1 : 0;
     if (clkName) rt.stepEdge(clkName, next);
     else rt.eval();
     clockLevelRef.current = next;
-    if (next === 1) cycleRef.current += 1;
+    if (next === activeLevel) cycleRef.current += 1;
     engine.setCycle(cycleRef.current);
     const nextStats = engine.stats();
     setEngineStats(nextStats);
@@ -529,18 +553,21 @@ export const App: React.FC = () => {
   const stepFullCycle = () => {
     const rt = runtimeRef.current;
     if (!rt) return;
+    const polarity = clockPolarityRef.current;
+    const activeLevel: 0 | 1 = polarity === 'active-low' ? 0 : 1;
+    const idleLevel: 0 | 1 = polarity === 'active-low' ? 1 : 0;
     if (clkName) {
-      if (clockLevelRef.current === 1) rt.stepEdge(clkName, 0);
-      rt.stepEdge(clkName, 1);
+      if (clockLevelRef.current !== idleLevel) rt.stepEdge(clkName, idleLevel);
+      rt.stepEdge(clkName, activeLevel);
       cycleRef.current += 1;
       const hi = rt.getSignals();
       sampleMatrix(hi);
-      rt.stepEdge(clkName, 0);
+      rt.stepEdge(clkName, idleLevel);
     } else {
       rt.eval();
       cycleRef.current += 1;
     }
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     engine.setCycle(cycleRef.current);
     const nextStats = engine.stats();
     setEngineStats(nextStats);
@@ -548,10 +575,10 @@ export const App: React.FC = () => {
     const lo = rt.getSignals();
     sampleMatrix(lo);
     publishMatrix();
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     setCycleCount(cycleRef.current);
     setSignals(lo);
-    pushHistory([{ cycle: cycleRef.current, halfCycle: 0, values: lo }]);
+    pushHistory([{ cycle: cycleRef.current, halfCycle: idleLevel, values: lo }]);
   };
 
   // ------------------------------------------------------------- inputs
@@ -593,13 +620,14 @@ export const App: React.FC = () => {
       rt.ports
     );
     rt.reset(initialInputs);
+    const idleLevel: 0 | 1 = clockPolarityRef.current === 'active-low' ? 1 : 0;
     cycleRef.current = 0;
-    clockLevelRef.current = 0;
+    clockLevelRef.current = idleLevel;
     const sig = rt.getSignals();
-    setClockLevel(0);
+    setClockLevel(idleLevel);
     setCycleCount(0);
     setSignals(sig);
-    setHistory([{ cycle: 0, halfCycle: 0, values: sig }]);
+    setHistory([{ cycle: 0, halfCycle: idleLevel, values: sig }]);
     matrixRef.current = createEmptyMatrixBuffer();
     sampleMatrix(sig);
     publishMatrix();

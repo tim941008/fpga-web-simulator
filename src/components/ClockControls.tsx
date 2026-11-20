@@ -252,6 +252,12 @@ export const ClockControls: React.FC<ClockControlsProps> = ({
               isWarm ? 'text-amber-300' : 'text-emerald-300'
             }`}
           >
+            {Number.isFinite(rateHz) &&
+              !(RATE_PRESETS_HZ as readonly number[]).includes(rateHz) && (
+                <option value={rateHz}>
+                  {rateHz >= 1000 ? `${rateHz / 1000} kHz` : `${rateHz} Hz`}
+                </option>
+              )}
             {RATE_PRESETS_HZ.map((hz) => (
               <option key={hz} value={hz}>
                 {hz >= 1000 ? `${hz / 1000} kHz` : `${hz} Hz`}

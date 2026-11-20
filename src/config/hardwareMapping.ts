@@ -134,7 +134,12 @@ export function computeInitialInputSignals(
 
   for (const comp of components) {
     if (!comp.enabled) continue;
-    if (comp.type === 'SWITCH') {
+    if (comp.type === 'CLOCK') {
+      const port = portByName.get(comp.signalName);
+      if (port && port.direction === 'input') {
+        result[comp.signalName] = comp.polarity === 'active-low' ? 1n : 0n;
+      }
+    } else if (comp.type === 'SWITCH') {
       const port = portByName.get(comp.signalName);
       if (port && port.direction === 'input') {
         result[comp.signalName] = computeSwitchInitialRawValue(comp);

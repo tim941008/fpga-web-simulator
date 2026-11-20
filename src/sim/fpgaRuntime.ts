@@ -327,27 +327,36 @@ export class FpgaRuntime {
   }
 
   /**
-   * Build a hot-loop function that advances one full clock cycle (clk 1 -> eval -> clk 0 -> eval).
+   * Build a hot-loop function that advances one full clock cycle.
+   * - Active-High (default): clk 1 -> eval -> clk 0 -> eval (idle 0)
+   * - Active-Low: clk 0 -> eval -> clk 1 -> eval (idle 1)
    * Clock key / model are resolved once so the per-cycle cost is two state writes + two evals
    * (no BigInt conversion, no map lookups, no signal snapshots).
    */
-  makeCycleStepper(clockName: string | null): () => void {
+  makeCycleStepper(
+    clockName: string | null,
+    polarity: 'active-high' | 'active-low' = 'active-high'
+  ): () => void {
     const model = this.model;
     const info = clockName ? this.vars.get(clockName) : undefined;
     if (!info) return () => model.eval();
     const key = info.key;
+    const activeLevel: 0 | 1 = polarity === 'active-low' ? 0 : 1;
+    const idleLevel: 0 | 1 = polarity === 'active-low' ? 1 : 0;
     if (typeof model.state[key] === 'number' || model.state[key] == null) {
       return () => {
-        model.state[key] = 1;
+        model.state[key] = activeLevel;
         model.eval();
-        model.state[key] = 0;
+        model.state[key] = idleLevel;
         model.eval();
       };
     }
+    const activeBig = BigInt(activeLevel);
+    const idleBig = BigInt(idleLevel);
     return () => {
-      this.setSignal(clockName!, 1n);
+      this.setSignal(clockName!, activeBig);
       model.eval();
-      this.setSignal(clockName!, 0n);
+      this.setSignal(clockName!, idleBig);
       model.eval();
     };
   }
