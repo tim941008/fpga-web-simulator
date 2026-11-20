@@ -188,8 +188,8 @@ export const App: React.FC = () => {
   );
 
   const verilogParsed = useMemo(
-    () => parseVerilogSource(verilogOnlyContents),
-    [verilogOnlyContents]
+    () => parseVerilogSource(verilogOnlyContents, topModule),
+    [verilogOnlyContents, topModule]
   );
 
   // Ports reported by Verilator are authoritative; fall back to the parser before first compile
