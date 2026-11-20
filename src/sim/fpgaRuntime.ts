@@ -77,11 +77,92 @@ function getWorker(): Worker {
   return worker;
 }
 
-function runVerilator(files: SourceFile[], top: string): Promise<WorkerResponse> {
+export const VERILATOR_TIMEOUT_MS = 30_000;
+
+/**
+ * Normalizes a Verilog $readmemh / $readmemb file into one-entry-per-address lines.
+ * Strips comments and honors `@hex_addr` address directives by zero-filling gaps (BUG-13).
+ */
+export function normalizeMemContent(raw: string): string {
+  const tokens = raw
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+
+  const cells: string[] = [];
+  let addr = 0;
+  const MAX_ADDR = 65536;
+
+  for (const tok of tokens) {
+    if (tok.startsWith('@')) {
+      const parsed = parseInt(tok.slice(1), 16);
+      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= MAX_ADDR) {
+        addr = parsed;
+      }
+      continue;
+    }
+    while (cells.length < addr) cells.push('0');
+    cells[addr] = tok;
+    addr += 1;
+  }
+
+  return cells.join('\n');
+}
+
+/**
+ * Enhances Verilator compile diagnostics with safe actionable hints (BUG-16).
+ */
+export function annotateCompileMessages(messages: CompileMessage[]): CompileMessage[] {
+  const out = [...messages];
+  const hasBlkLoopInit = out.some(
+    (m) =>
+      m.severity === 'error' &&
+      (/BLKLOOPINIT/i.test(m.msg) || /Delayed assignment to array inside for loops/i.test(m.msg))
+  );
+  if (hasBlkLoopInit) {
+    out.push({
+      severity: 'warning',
+      file: null,
+      line: 0,
+      msg: "Hint (BLKLOOPINIT): Verilator 4.205 does not support non-blocking (<=) assignments to unpacked arrays inside procedural for-loops. Do not blindly change <= to blocking = inside always @(posedge clk) (which can cause race conditions); instead, unroll structurally with a 'generate for' block or flatten the array.",
+    });
+  }
+  return out;
+}
+
+function runVerilator(
+  files: SourceFile[],
+  top: string,
+  timeoutMs: number = VERILATOR_TIMEOUT_MS
+): Promise<WorkerResponse> {
   const w = getWorker();
   const id = nextRequestId++;
   return new Promise((resolve) => {
-    pending.set(id, resolve);
+    const timer = setTimeout(() => {
+      if (!pending.has(id)) return;
+      pending.delete(id);
+      const timeoutErr: CompileMessage = {
+        severity: 'error',
+        file: null,
+        line: 0,
+        msg: `Verilator compilation timed out after ${Math.round(timeoutMs / 1000)} s; worker was reset.`,
+      };
+      // Reset the hung worker and reject any other in-flight requests cleanly
+      for (const [otherId, cb] of pending) {
+        cb({ id: otherId, ok: false, errors: [timeoutErr], log: [] });
+      }
+      pending.clear();
+      worker?.terminate();
+      worker = null;
+      resolve({ id, ok: false, errors: [timeoutErr], log: [] });
+    }, timeoutMs);
+
+    pending.set(id, (res) => {
+      clearTimeout(timer);
+      resolve(res);
+    });
     w.postMessage({ id, files, top });
   });
 }
@@ -123,6 +204,7 @@ export class FpgaRuntime {
   readonly topModule: string;
   readonly ports: PortDefinition[];
   readonly internalSignals: PortDefinition[];
+  readonly skippedWidePorts: Array<{ name: string; width: number }>;
 
   private model: any; // HDLModuleWASM | HDLModuleJS
   private vars = new Map<string, VarInfo>();
@@ -134,6 +216,7 @@ export class FpgaRuntime {
 
     const ports: PortDefinition[] = [];
     const internals: PortDefinition[] = [];
+    const skippedWidePorts: Array<{ name: string; width: number }> = [];
     // HDLModuleWASM keeps the AST in .hdlmod, HDLModuleJS in .mod
     const vardefs: Record<string, any> = (model.hdlmod ?? model.mod).vardefs;
 
@@ -144,12 +227,19 @@ export class FpgaRuntime {
       const msb = Math.max(dt.left, dt.right);
       const lsb = Math.min(dt.left, dt.right);
       const width = msb - lsb + 1;
-      if (width > 64) continue;
+      if (width > 64) {
+        if (vd.isInput || vd.isOutput) {
+          skippedWidePorts.push({ name: key, width });
+        }
+        continue;
+      }
 
       if (vd.isInput || vd.isOutput) {
+        const direction: PortDefinition['direction'] =
+          vd.isInput && vd.isOutput ? 'inout' : vd.isInput ? 'input' : 'output';
         const def: PortDefinition = {
           name: key,
-          direction: vd.isInput ? 'input' : 'output',
+          direction,
           msb,
           lsb,
           width,
@@ -168,6 +258,7 @@ export class FpgaRuntime {
 
     this.ports = ports;
     this.internalSignals = internals.filter((d) => !ports.some((p) => p.name === d.name));
+    this.skippedWidePorts = skippedWidePorts;
   }
 
   /** "top__DOT__u_cnt__DOT__count" / "top$u_cnt$count" -> "u_cnt.count" */
@@ -187,7 +278,7 @@ export class FpgaRuntime {
     const t0 = performance.now();
     const res = await runVerilator(files, top);
     const t1 = performance.now();
-    const messages = [...(res.errors ?? [])];
+    const messages = annotateCompileMessages(res.errors ?? []);
 
     if (!res.ok || !res.xml) {
       return { runtime: null, messages, log: res.log ?? [], timings: { verilatorMs: t1 - t0, codegenMs: 0 } };
@@ -201,19 +292,8 @@ export class FpgaRuntime {
       const constPool = parser.modules['@CONST-POOL@'];
       if (!topDef) throw new Error('Verilator XML has no TOP module');
 
-      // Build memory file lookup for $readmemh / $readmemb (fixes BUG-002)
-      const normalizeMemContent = (raw: string): string =>
-        raw
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/\/\/.*$/gm, '')
-          .split(/\s+/)
-          .map((t) => t.trim())
-          .filter((t) => t.length > 0 && !t.startsWith('@'))
-          .join('\n');
-
+      // Build memory file lookup for $readmemh / $readmemb from actual project files only (BUG-13)
       const memFiles = new Map<string, string>();
-      // Built-in default fixture for rom_init.hex test / demo
-      memFiles.set('rom_init.hex', 'A5\n5A\nF0\n0F');
       for (const f of files) {
         const norm = normalizeMemContent(f.content);
         const base = f.name.split(/[\\/]/).pop() ?? f.name;
@@ -262,6 +342,17 @@ export class FpgaRuntime {
         jsModel.init();
         jsModel.powercycle();
         runtime = new FpgaRuntime(jsModel, 'verilator-js', top);
+      }
+
+      if (runtime && runtime.skippedWidePorts.length > 0) {
+        for (const wp of runtime.skippedWidePorts) {
+          messages.push({
+            severity: 'warning',
+            file: null,
+            line: 0,
+            msg: `Port "${wp.name}" (${wp.width}-bit) exceeds 64 bits and is omitted from live hardware/signal inspection.`,
+          });
+        }
       }
     } catch (e) {
       const err = e as any;

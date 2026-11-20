@@ -36,6 +36,13 @@ var ERR_RE = /%(Error|Warning)(?:-[A-Z0-9_]+)?: (?:(.+?):(\d+):(?:\d+:)?)?\s*(.+
 function compile(req) {
   var errors = [];
   var log = [];
+  var safeToOriginal = {};
+
+  function resolveOriginalFile(path) {
+    if (!path) return null;
+    var clean = path.replace(/^\.\//, '');
+    return safeToOriginal[clean] || safeToOriginal[path] || path;
+  }
 
   function onStdout(s) {
     log.push(s);
@@ -48,7 +55,7 @@ function compile(req) {
       if (/Exiting due to \d+/.test(msg) || /Use ["]\/[*]/.test(msg)) return;
       errors.push({
         severity: m[1].toLowerCase() === 'warning' ? 'warning' : 'error',
-        file: m[2] || null,
+        file: resolveOriginalFile(m[2] || null),
         line: m[3] ? parseInt(m[3], 10) : 0,
         msg: msg,
       });
@@ -66,7 +73,7 @@ function compile(req) {
       noExitRuntime: true,
       print: onStdout,
       printErr: onStderr,
-      wasmMemory: new WebAssembly.Memory({ initial: 1024, maximum: 16384 }), // 64MB..1GB
+      wasmMemory: new WebAssembly.Memory({ initial: 512, maximum: 4096 }), // 32MB..256MB (BUG-12)
     });
 
     var FS = mod.FS;
@@ -83,6 +90,7 @@ function compile(req) {
         try { FS.mkdir(dir); } catch (e) { /* exists */ }
       }
       var safe = segs.join('/');
+      safeToOriginal[safe] = f.name;
       FS.writeFile(safe, f.content);
       if (dir) incDirs[dir] = true;
       if (/\.(v|sv)$/i.test(safe)) paths.push(safe);
