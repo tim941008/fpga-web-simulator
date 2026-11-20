@@ -73,7 +73,7 @@ function compile(req) {
       noExitRuntime: true,
       print: onStdout,
       printErr: onStderr,
-      wasmMemory: new WebAssembly.Memory({ initial: 1024, maximum: 4096 }), // 64MB initial (required by verilator_bin.wasm), 256MB cap (BUG-12)
+      wasmMemory: new WebAssembly.Memory({ initial: 1024, maximum: 16384 }), // 64MB..1GB (exact limits required by precompiled verilator_bin.wasm)
     });
 
     var FS = mod.FS;
