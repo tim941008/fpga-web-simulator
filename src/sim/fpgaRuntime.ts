@@ -52,7 +52,7 @@ const pending = new Map<number, (res: WorkerResponse) => void>();
 
 function getWorker(): Worker {
   if (!worker) {
-    const url = `${import.meta.env.BASE_URL}verilator/verilator-worker.js`;
+    const url = `${import.meta.env.BASE_URL}verilator/verilator-worker.js?v=2`;
     worker = new Worker(url); // classic worker (uses importScripts)
     worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const cb = pending.get(ev.data.id);
