@@ -104,6 +104,7 @@ function compile(req) {
       '-Wno-DECLFILENAME', '-Wno-UNUSED', '-Wno-EOFNEWLINE', '-Wno-PROCASSWIRE',
       '-Wno-WIDTH', '-Wno-CASEINCOMPLETE', '-Wno-UNDRIVEN', '-Wno-PINCONNECTEMPTY',
       '--x-assign', 'fast', '--noassert', '--pins-sc-biguint',
+      '--unroll-count', '256', '--unroll-stmts', '65536',
       '--debug-check', // makes this Verilator build emit obj_dir/V<top>.xml
       '--top-module', top,
     ]).concat(paths);
