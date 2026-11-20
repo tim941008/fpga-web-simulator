@@ -771,7 +771,7 @@ export const App: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Preset Selector */}
             <select
-              value={selectedPresetId}
+              value={projectOrigin.kind === 'preset' ? selectedPresetId : ''}
               onChange={(e) => {
                 const preset = SAMPLE_PRESETS.find((p) => p.id === e.target.value);
                 if (preset) {
@@ -790,6 +790,11 @@ export const App: React.FC = () => {
                   : 'border-indigo-500/35 hover:border-indigo-400/60 focus:border-emerald-400'
               }`}
             >
+              {projectOrigin.kind !== 'preset' && (
+                <option value="" disabled>
+                  {t.presetLabel} —
+                </option>
+              )}
               {SAMPLE_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
                   {t.presetLabel} {p.name}
@@ -799,7 +804,7 @@ export const App: React.FC = () => {
 
             {/* Multi-file example projects */}
             <select
-              value=""
+              value={projectOrigin.kind === 'example' ? projectOrigin.id : ''}
               onChange={(e) => {
                 const ex = EXAMPLE_PROJECTS.find((x) => x.id === e.target.value);
                 if (!ex) return;

@@ -124,6 +124,29 @@ export function createFullDemoHardwareConfig(): HardwareConfigSchema {
 }
 
 /**
+ * Reusable factory that builds a board hardware configuration containing only the
+ * standard board components whose signal(s) exist in `signalNames`.
+ * Keeps multi-file examples and subset designs free of missing-signal errors.
+ */
+export function createBoardConfigForSignals(
+  boardName: string,
+  signalNames: readonly string[]
+): HardwareConfigSchema {
+  const allowed = new Set(signalNames);
+  const full = createFullDemoHardwareConfig();
+  return {
+    schemaVersion: HARDWARE_CONFIG_SCHEMA_VERSION,
+    boardName,
+    components: full.components.filter((comp) => {
+      if (comp.type === 'MATRIX') {
+        return allowed.has(comp.row.signalName) && allowed.has(comp.col.signalName);
+      }
+      return allowed.has(comp.signalName);
+    }),
+  };
+}
+
+/**
  * Default hardware configuration for Preset 2 (`comb_alu`).
  */
 export function createCombAluHardwareConfig(): HardwareConfigSchema {

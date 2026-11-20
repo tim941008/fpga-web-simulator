@@ -46,6 +46,7 @@ import {
   StorageLike,
 } from '../configPersistence';
 import { parseVerilogSource } from '../../parsers/verilogParser';
+import { EXAMPLE_PROJECTS } from '../../presets/exampleProjects';
 import { SAMPLE_PRESETS } from '../../presets/sampleDesigns';
 
 function createMemoryStorage(): StorageLike {
@@ -592,5 +593,221 @@ describe('7. Project-Scoped Persistence Isolation & Legacy Migration (BUG-01)', 
     const stillGame = loadScopedHardwareConfig(gameScope, createFullDemoHardwareConfig(), gamePorts, storage);
     expect(stillGame.source).toBe('scoped');
     expect(stillGame.config.boardName).toBe('Game Board');
+  });
+});
+
+describe('8. Multi-File Example Hardware Configurations & Restore Default (BUG-05)', () => {
+  const expectedByExampleId: Record<string, { signals: string[]; types: string[] }> = {
+    'ex1-sw-led': {
+      signals: ['SW', 'LEDR'],
+      types: ['SWITCH', 'LED'],
+    },
+    'ex2-counter': {
+      signals: ['CLOCK_50', 'KEY', 'LEDR'],
+      types: ['CLOCK', 'KEY', 'LED'],
+    },
+    'ex3-sevenseg': {
+      signals: ['CLOCK_50', 'KEY', 'HEX0'],
+      types: ['CLOCK', 'KEY', 'SEVEN_SEGMENT'],
+    },
+    'ex4-matrix': {
+      signals: ['CLOCK_50', 'KEY', 'MATRIX_ROW', 'MATRIX_COL'],
+      types: ['CLOCK', 'KEY', 'MATRIX'],
+    },
+  };
+
+  function collectSignals(cfg: HardwareConfigSchema): string[] {
+    const out: string[] = [];
+    for (const c of cfg.components) {
+      if (c.type === 'MATRIX') {
+        out.push(c.row.signalName, c.col.signalName);
+      } else {
+        out.push(c.signalName);
+      }
+    }
+    return out;
+  }
+
+  for (const ex of EXAMPLE_PROJECTS) {
+    it(`loads ${ex.id} (${ex.topModule}) with zero hardware validation issues and exact signal bindings`, () => {
+      const storage = createMemoryStorage();
+      const parsed = parseVerilogSource(ex.files.map((f) => f.content));
+      expect(parsed.topModule).toBe(ex.topModule);
+
+      const scope = buildHardwareConfigScopeKey(
+        { kind: 'example', id: ex.id },
+        ex.files.map((f) => f.name),
+        ex.topModule
+      );
+      const fallback = ex.createHardwareConfig();
+      const loaded = loadScopedHardwareConfig(scope, fallback, parsed.ports, storage);
+
+      expect(loaded.source).toBe('default');
+      expect(validateHardwareConfig(loaded.config.components, parsed.ports)).toEqual([]);
+      expect(collectSignals(loaded.config)).toEqual(expectedByExampleId[ex.id].signals);
+      expect(loaded.config.components.map((c) => c.type)).toEqual(
+        expectedByExampleId[ex.id].types
+      );
+    });
+
+    it(`Restore Default on ${ex.id} restores its own config (not Preset 1 full demo)`, () => {
+      const storage = createMemoryStorage();
+      const parsed = parseVerilogSource(ex.files.map((f) => f.content));
+      const scope = buildHardwareConfigScopeKey(
+        { kind: 'example', id: ex.id },
+        ex.files.map((f) => f.name),
+        ex.topModule
+      );
+      const customized: HardwareConfigSchema = {
+        ...ex.createHardwareConfig(),
+        boardName: `Edited ${ex.id}`,
+      };
+      saveScopedHardwareConfig(scope, customized, storage);
+
+      const restored = resetScopedHardwareConfig(scope, ex.createHardwareConfig(), storage);
+      expect(restored.boardName).not.toBe(`Edited ${ex.id}`);
+      expect(restored.boardName).not.toBe(createFullDemoHardwareConfig().boardName);
+      expect(collectSignals(restored)).toEqual(expectedByExampleId[ex.id].signals);
+      expect(validateHardwareConfig(restored.components, parsed.ports)).toEqual([]);
+    });
+  }
+
+  it('switching between two examples with different hardware configs does not leak bindings', () => {
+    const storage = createMemoryStorage();
+    const ex1 = EXAMPLE_PROJECTS.find((e) => e.id === 'ex1-sw-led')!;
+    const ex4 = EXAMPLE_PROJECTS.find((e) => e.id === 'ex4-matrix')!;
+    const ex1Ports = parseVerilogSource(ex1.files.map((f) => f.content)).ports;
+    const ex4Ports = parseVerilogSource(ex4.files.map((f) => f.content)).ports;
+
+    const ex1Scope = buildHardwareConfigScopeKey(
+      { kind: 'example', id: ex1.id },
+      ex1.files.map((f) => f.name),
+      ex1.topModule
+    );
+    const ex4Scope = buildHardwareConfigScopeKey(
+      { kind: 'example', id: ex4.id },
+      ex4.files.map((f) => f.name),
+      ex4.topModule
+    );
+
+    saveScopedHardwareConfig(
+      ex1Scope,
+      { ...ex1.createHardwareConfig(), boardName: 'Custom SW-LED' },
+      storage
+    );
+
+    const loadedEx4 = loadScopedHardwareConfig(
+      ex4Scope,
+      ex4.createHardwareConfig(),
+      ex4Ports,
+      storage
+    );
+    expect(loadedEx4.source).toBe('default');
+    expect(collectSignals(loadedEx4.config)).toEqual([
+      'CLOCK_50',
+      'KEY',
+      'MATRIX_ROW',
+      'MATRIX_COL',
+    ]);
+    expect(validateHardwareConfig(loadedEx4.config.components, ex4Ports)).toEqual([]);
+
+    // Switching back to ex1 preserves ex1 customization
+    const loadedEx1Again = loadScopedHardwareConfig(
+      ex1Scope,
+      ex1.createHardwareConfig(),
+      ex1Ports,
+      storage
+    );
+    expect(loadedEx1Again.source).toBe('scoped');
+    expect(loadedEx1Again.config.boardName).toBe('Custom SW-LED');
+  });
+
+  it('refreshing after loading an example keeps default preset clean and preserves example customization', () => {
+    const storage = createMemoryStorage();
+    const demoPorts = parseVerilogSource([SAMPLE_PRESETS[0].verilogCode]).ports;
+    const demoScope = buildHardwareConfigScopeKey(
+      { kind: 'preset', id: SAMPLE_PRESETS[0].id },
+      [SAMPLE_PRESETS[0].verilogFilename],
+      'top_fpga_demo'
+    );
+    const ex3 = EXAMPLE_PROJECTS.find((e) => e.id === 'ex3-sevenseg')!;
+    const ex3Ports = parseVerilogSource(ex3.files.map((f) => f.content)).ports;
+    const ex3Scope = buildHardwareConfigScopeKey(
+      { kind: 'example', id: ex3.id },
+      ex3.files.map((f) => f.name),
+      ex3.topModule
+    );
+
+    saveScopedHardwareConfig(
+      ex3Scope,
+      { ...ex3.createHardwareConfig(), boardName: 'My SevenSeg Bench' },
+      storage
+    );
+
+    // Refresh restores default Preset 1 (full 7-component demo) without ex3 leakage
+    const demoReloaded = loadScopedHardwareConfig(
+      demoScope,
+      SAMPLE_PRESETS[0].createHardwareConfig(),
+      demoPorts,
+      storage
+    );
+    expect(demoReloaded.source).toBe('default');
+    expect(demoReloaded.config.components).toHaveLength(7);
+    expect(validateHardwareConfig(demoReloaded.config.components, demoPorts)).toEqual([]);
+
+    // Re-selecting ex3 restores user customization
+    const ex3Reloaded = loadScopedHardwareConfig(
+      ex3Scope,
+      ex3.createHardwareConfig(),
+      ex3Ports,
+      storage
+    );
+    expect(ex3Reloaded.source).toBe('scoped');
+    expect(ex3Reloaded.config.boardName).toBe('My SevenSeg Bench');
+    expect(validateHardwareConfig(ex3Reloaded.config.components, ex3Ports)).toEqual([]);
+  });
+
+  it('handles invalid signal bindings stored under an example scope deterministically', () => {
+    const storage = createMemoryStorage();
+    const ex2 = EXAMPLE_PROJECTS.find((e) => e.id === 'ex2-counter')!;
+    const ex2Ports = parseVerilogSource(ex2.files.map((f) => f.content)).ports;
+    const ex2Scope = buildHardwareConfigScopeKey(
+      { kind: 'example', id: ex2.id },
+      ex2.files.map((f) => f.name),
+      ex2.topModule
+    );
+
+    // Completely incompatible stored config -> falls back to ex2 default
+    saveScopedHardwareConfig(
+      ex2Scope,
+      {
+        schemaVersion: HARDWARE_CONFIG_SCHEMA_VERSION,
+        boardName: 'Wrong Board',
+        components: [
+          {
+            id: 'bad-sw',
+            type: 'SWITCH',
+            label: 'Bad SW',
+            enabled: true,
+            signalName: 'NONEXISTENT_SW',
+            width: 8,
+            bitOrder: 'msb-to-lsb',
+            polarity: 'active-high',
+            initialValue: '0',
+          },
+        ],
+      },
+      storage
+    );
+
+    const recovered = loadScopedHardwareConfig(
+      ex2Scope,
+      ex2.createHardwareConfig(),
+      ex2Ports,
+      storage
+    );
+    expect(recovered.source).toBe('fallback-incompatible');
+    expect(collectSignals(recovered.config)).toEqual(['CLOCK_50', 'KEY', 'LEDR']);
+    expect(validateHardwareConfig(recovered.config.components, ex2Ports)).toEqual([]);
   });
 });
