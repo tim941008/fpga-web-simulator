@@ -3,7 +3,6 @@ import { PortDefinition, SignalHistoryEntry } from '../types/fpga';
 import { HardwareComponentConfig } from '../types/hardwareConfig';
 import { getMappedComponentsForSignal } from '../config/hardwareMapping';
 import {
-  formatSignalCountSummary,
   loadVisibleSignalLimit,
   parseVisibleSignalLimit,
   saveVisibleSignalLimit,
@@ -106,7 +105,7 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
                 : 'bg-slate-950 border-slate-700 text-slate-300'
             }`}
           >
-            {formatSignalCountSummary(visibleSignals.length, signalDefs.length)}
+            {`${t.showingSignalsPrefix} ${visibleSignals.length} ${t.showingSignalsOf} ${signalDefs.length} ${t.showingSignalsSuffix}`}
           </span>
         </div>
 
@@ -118,9 +117,9 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
             }`}
           >
             <Eye className={`w-3.5 h-3.5 ${isWarm ? 'text-amber-400' : 'text-cyan-400'}`} />
-            <span className="text-slate-400">Visible Signals</span>
+            <span className="text-slate-400">{t.visibleSignalsLabel}</span>
             <select
-              aria-label="Visible Signals"
+              aria-label={t.visibleSignalsLabel}
               value={String(visibleLimit)}
               onChange={(e) => handleVisibleLimitChange(e.target.value)}
               className={`bg-slate-900 border rounded-lg px-2 py-0.5 text-xs font-mono font-semibold focus:outline-none ${
@@ -131,7 +130,7 @@ export const SignalMonitor: React.FC<SignalMonitorProps> = ({
             >
               {VISIBLE_SIGNAL_OPTIONS.map((opt) => (
                 <option key={String(opt)} value={String(opt)}>
-                  {opt === 'all' ? 'All' : opt}
+                  {opt === 'all' ? t.allSignalsOption : opt}
                 </option>
               ))}
             </select>

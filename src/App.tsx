@@ -754,7 +754,7 @@ export const App: React.FC = () => {
             }`}
           >
             <UploadCloud className="w-8 h-8" />
-            Drop .v / .sv files, a folder or a .zip to load the project
+            {t.dropProjectHint}
           </div>
         </div>
       )}
@@ -795,7 +795,7 @@ export const App: React.FC = () => {
                       : 'bg-slate-800 text-slate-300 border-slate-700'
                   }`}
                 >
-                  Digital Logic Workbench
+                  {t.workbenchBadge}
                 </span>
               </h1>
               <p className="text-xs text-slate-400">
@@ -865,7 +865,7 @@ export const App: React.FC = () => {
                   : 'border-indigo-500/35 hover:border-indigo-400/60 focus:border-emerald-400'
               }`}
             >
-              <option value="">Multi-file examples...</option>
+              <option value="">{t.multiFileExamplesPlaceholder}</option>
               {EXAMPLE_PROJECTS.map((x) => (
                 <option key={x.id} value={x.id}>
                   {x.name}
@@ -878,6 +878,8 @@ export const App: React.FC = () => {
               modules={scannedModules}
               topCandidates={topCandidates}
               invalid={topInvalid}
+              theme={uiTheme}
+              t={t}
               onChange={setSelectedTop}
             />
 
@@ -900,7 +902,7 @@ export const App: React.FC = () => {
             </label>
             <label className={uploadBtn} title="Upload a whole project folder">
               <FolderOpen className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
-              <span>Folder</span>
+              <span>{t.folderBtn}</span>
               <input
                 type="file"
                 multiple
@@ -914,7 +916,7 @@ export const App: React.FC = () => {
             </label>
             <label className={uploadBtn} title="Upload a project .zip">
               <FileArchive className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
-              <span>ZIP</span>
+              <span>{t.zipBtn}</span>
               <input
                 type="file"
                 accept=".zip"
@@ -938,7 +940,7 @@ export const App: React.FC = () => {
               }`}
             >
               <Palette className={`w-3.5 h-3.5 ${isWarm ? 'text-orange-300' : 'text-emerald-300'}`} />
-              <span>{isWarm ? 'FPGA Lab' : 'Classic'}</span>
+              <span>{isWarm ? t.themeWarmLab : t.themeClassic}</span>
             </button>
 
             {/* Language Switcher (EN / 繁體中文) */}
@@ -1133,6 +1135,7 @@ export const App: React.FC = () => {
                   colValue={signals[activeMatrixConfig.col.signalName] ?? 0n}
                   isConnected={isMatrixConnected}
                   t={t}
+                  theme={uiTheme}
                   onUpdateConfig={handleUpdateMatrixConfig}
                   onClearBuffer={clearMatrix}
                 />
@@ -1147,6 +1150,7 @@ export const App: React.FC = () => {
             ports={ports}
             validationIssues={validationIssues}
             t={t}
+            theme={uiTheme}
             onChangeConfig={setHardwareConfig}
             onRestoreDefaults={handleRestoreDefaultConfig}
           />
@@ -1166,6 +1170,8 @@ export const App: React.FC = () => {
                 activeFileId={activeFile?.id ?? null}
                 topModule={topModule}
                 topCandidates={topCandidates}
+                theme={uiTheme}
+                t={t}
                 onSelectFile={setActiveFileId}
                 onRename={handleRename}
                 onDelete={handleDeleteFile}

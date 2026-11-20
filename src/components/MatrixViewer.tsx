@@ -1,6 +1,7 @@
 import React from 'react';
 import { Grid, Sparkles, Trash2, RotateCcw } from 'lucide-react';
 import { TranslationDict } from '../i18n/translations';
+import { UiTheme } from '../config/uiPreferences';
 import {
   LedColorTheme,
   MatrixComponentConfig,
@@ -18,6 +19,7 @@ interface MatrixViewerProps {
   colValue: bigint;
   isConnected: boolean;
   t: TranslationDict;
+  theme?: UiTheme;
   onUpdateConfig: (updated: MatrixComponentConfig) => void;
   onClearBuffer: () => void;
 }
@@ -37,9 +39,11 @@ export const MatrixViewer: React.FC<MatrixViewerProps> = ({
   colValue,
   isConnected,
   t,
+  theme = 'warm-lab',
   onUpdateConfig,
   onClearBuffer,
 }) => {
+  const isWarm = theme === 'warm-lab';
   const activeTheme = COLOR_MAP[config.color] ?? COLOR_MAP.emerald;
 
   const handleTogglePatternPixel = (displayRow: number, displayCol: number) => {
@@ -52,12 +56,28 @@ export const MatrixViewer: React.FC<MatrixViewerProps> = ({
   };
 
   return (
-    <div className="bg-gradient-to-b from-slate-900/95 to-indigo-950/30 border border-indigo-500/30 rounded-2xl p-5 shadow-xl flex flex-col justify-between h-full">
+    <div
+      className={`border rounded-2xl p-5 shadow-xl flex flex-col justify-between h-full ${
+        isWarm
+          ? 'bg-gradient-to-b from-slate-900/95 to-amber-950/20 border-amber-500/30'
+          : 'bg-gradient-to-b from-slate-900/95 to-indigo-950/30 border-indigo-500/30'
+      }`}
+    >
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b border-indigo-500/20">
+      <div
+        className={`flex flex-wrap items-center justify-between gap-2 pb-3 mb-3 border-b ${
+          isWarm ? 'border-amber-500/20' : 'border-indigo-500/20'
+        }`}
+      >
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-            <Grid className="w-4 h-4 text-emerald-400" />
+          <div
+            className={`w-7 h-7 rounded-lg border flex items-center justify-center ${
+              isWarm
+                ? 'bg-amber-500/15 border-amber-500/35'
+                : 'bg-emerald-500/15 border-emerald-500/30'
+            }`}
+          >
+            <Grid className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-emerald-400'}`} />
           </div>
           <div>
             <h2 className="text-sm font-semibold text-slate-100">
@@ -97,7 +117,9 @@ export const MatrixViewer: React.FC<MatrixViewerProps> = ({
             onClick={() => onUpdateConfig({ ...config, displayMode: 'live' })}
             className={`px-2 py-1 rounded-md transition ${
               config.displayMode === 'live'
-                ? 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/40'
+                ? isWarm
+                  ? 'bg-amber-500/25 text-amber-200 border border-amber-500/40'
+                  : 'bg-emerald-500/25 text-emerald-200 border border-emerald-500/40'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >

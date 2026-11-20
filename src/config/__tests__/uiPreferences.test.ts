@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { TRANSLATIONS } from '../../i18n/translations';
 import { HARDWARE_CONFIG_SCHEMA_VERSION } from '../../types/hardwareConfig';
 import { HARDWARE_CONFIG_STORAGE_KEY, StorageLike } from '../configPersistence';
 import {
@@ -120,5 +121,17 @@ describe('Wave Viewer & Theme persistence (Phase C.2)', () => {
     expect(HARDWARE_CONFIG_SCHEMA_VERSION).toBe(1);
     expect(WAVE_VISIBLE_COUNT_STORAGE_KEY).not.toBe(HARDWARE_CONFIG_STORAGE_KEY);
     expect(UI_THEME_STORAGE_KEY).not.toBe(HARDWARE_CONFIG_STORAGE_KEY);
+  });
+});
+
+describe('Bilingual translation dictionary completeness (BUG-07)', () => {
+  it('contains identical non-empty keys in en and zh-TW dictionaries', () => {
+    const enKeys = Object.keys(TRANSLATIONS.en).sort();
+    const zhKeys = Object.keys(TRANSLATIONS['zh-TW']).sort();
+    expect(zhKeys).toEqual(enKeys);
+    for (const k of enKeys) {
+      expect((TRANSLATIONS.en as Record<string, string>)[k].trim().length).toBeGreaterThan(0);
+      expect((TRANSLATIONS['zh-TW'] as Record<string, string>)[k].trim().length).toBeGreaterThan(0);
+    }
   });
 });

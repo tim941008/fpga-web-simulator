@@ -23,12 +23,14 @@ import {
 import { createNewComponentConfig } from '../config/defaultHardwareConfig';
 import { createDefaultMatrixPattern } from '../config/matrixMapping';
 import { TranslationDict } from '../i18n/translations';
+import { UiTheme } from '../config/uiPreferences';
 
 interface HardwareConfigPanelProps {
   config: HardwareConfigSchema;
   ports: PortDefinition[];
   validationIssues: ComponentValidationIssue[];
   t: TranslationDict;
+  theme?: UiTheme;
   onChangeConfig: (next: HardwareConfigSchema) => void;
   onRestoreDefaults: () => void;
 }
@@ -104,9 +106,11 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
   ports,
   validationIssues,
   t,
+  theme = 'warm-lab',
   onChangeConfig,
   onRestoreDefaults,
 }) => {
+  const isWarm = theme === 'warm-lab';
   const inputPorts = ports.filter((p) => p.direction === 'input' || p.direction === 'inout');
   const outputPorts = ports.filter((p) => p.direction === 'output' || p.direction === 'inout');
 
@@ -167,18 +171,26 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
           onSelect(name, found);
         }}
         placeholder="Signal name"
-        className="w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono text-cyan-200 focus:outline-none focus:border-cyan-400"
+        className={`w-32 bg-slate-950 border border-slate-700 rounded-lg px-2 py-1.5 text-xs font-mono focus:outline-none ${
+          isWarm
+            ? 'text-amber-200 focus:border-amber-400'
+            : 'text-cyan-200 focus:border-cyan-400'
+        }`}
       />
     </div>
   );
 
   return (
-    <div className="bg-slate-900/95 border border-cyan-500/25 rounded-2xl p-5 space-y-5 shadow-xl">
+    <div
+      className={`bg-slate-900/95 border rounded-2xl p-5 space-y-5 shadow-xl ${
+        isWarm ? 'border-amber-500/30' : 'border-cyan-500/25'
+      }`}
+    >
       {/* Header & Add Controls */}
       <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
           <h2 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-            <Sliders className="w-4 h-4 text-cyan-400" />
+            <Sliders className={`w-4 h-4 ${isWarm ? 'text-amber-400' : 'text-cyan-400'}`} />
             {t.configPanelTitle}
           </h2>
           <p className="text-xs text-slate-400 mt-1">{t.configPanelSubtitle}</p>
@@ -202,7 +214,11 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
             key={type}
             type="button"
             onClick={() => addComponent(type)}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/35 transition"
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-mono font-semibold border transition ${
+              isWarm
+                ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border-amber-500/40'
+                : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border-emerald-500/35'
+            }`}
           >
             <Plus className="w-3 h-3" />
             {type}
@@ -255,7 +271,13 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
               {/* Card Header */}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/35">
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border ${
+                      isWarm
+                        ? 'bg-orange-500/20 text-orange-200 border-orange-500/35'
+                        : 'bg-indigo-500/20 text-indigo-300 border-indigo-500/35'
+                    }`}
+                  >
                     {comp.type}
                   </span>
                   <input
@@ -618,8 +640,16 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
                   </div>
 
                   {/* Column Axis */}
-                  <div className="bg-slate-900/70 border border-cyan-500/25 rounded-lg p-3 space-y-2">
-                    <div className="text-[11px] font-mono font-bold text-cyan-300">
+                  <div
+                    className={`bg-slate-900/70 border rounded-lg p-3 space-y-2 ${
+                      isWarm ? 'border-amber-500/25' : 'border-cyan-500/25'
+                    }`}
+                  >
+                    <div
+                      className={`text-[11px] font-mono font-bold ${
+                        isWarm ? 'text-amber-300' : 'text-cyan-300'
+                      }`}
+                    >
                       {t.colAxisTitle}
                     </div>
                     {renderSignalSelect(comp.col.signalName, outputPorts, (sigName, found) =>
