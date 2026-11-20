@@ -39,6 +39,7 @@ import {
   HARDWARE_CONFIG_STORAGE_KEY,
   loadHardwareConfig,
   loadScopedHardwareConfig,
+  parseStoredHardwareConfig,
   resetHardwareConfig,
   resetScopedHardwareConfig,
   saveHardwareConfig,
@@ -809,5 +810,79 @@ describe('8. Multi-File Example Hardware Configurations & Restore Default (BUG-0
     expect(recovered.source).toBe('fallback-incompatible');
     expect(collectSignals(recovered.config)).toEqual(['CLOCK_50', 'KEY', 'LEDR']);
     expect(validateHardwareConfig(recovered.config.components, ex2Ports)).toEqual([]);
+  });
+});
+
+// ============================================================================
+// 9. Validation & Strict Persistence Guards (BUG-08, BUG-09, BUG-10)
+// ============================================================================
+describe('9. Validation & Strict Persistence Guards (BUG-08, BUG-09, BUG-10)', () => {
+  const demoPorts: PortDefinition[] = [
+    { name: 'CLOCK_50', direction: 'input', width: 1, msb: 0, lsb: 0 },
+    { name: 'SW', direction: 'input', width: 10, msb: 9, lsb: 0 },
+    { name: 'KEY', direction: 'input', width: 4, msb: 3, lsb: 0 },
+    { name: 'MATRIX_ROW', direction: 'output', width: 16, msb: 15, lsb: 0 },
+    { name: 'MATRIX_COL', direction: 'output', width: 16, msb: 15, lsb: 0 },
+  ];
+
+  it('warns when multiple enabled CLOCK or MATRIX components exist (BUG-08)', () => {
+    const base = createFullDemoHardwareConfig();
+    const clk1 = base.components.find((c) => c.type === 'CLOCK')!;
+    const mat1 = base.components.find((c) => c.type === 'MATRIX')!;
+    const issues = validateHardwareConfig(
+      [
+        clk1,
+        { ...clk1, id: 'clk-2', label: 'Clock 2' },
+        mat1,
+        { ...mat1, id: 'mat-2', label: 'Matrix 2' },
+      ],
+      demoPorts
+    );
+    expect(issues.some((i) => i.code === 'MULTIPLE_ACTIVE_CLOCKS' && i.componentId === 'clk-2')).toBe(true);
+    expect(issues.some((i) => i.code === 'MULTIPLE_ACTIVE_MATRICES' && i.componentId === 'mat-2')).toBe(true);
+  });
+
+  it('warns when two input components bind to the same Verilog signal (BUG-10)', () => {
+    const base = createFullDemoHardwareConfig();
+    const sw1 = base.components.find((c) => c.type === 'SWITCH')!;
+    const issues = validateHardwareConfig(
+      [sw1, { ...sw1, id: 'sw-2', label: 'Duplicate SW' }],
+      demoPorts
+    );
+    expect(issues.some((i) => i.code === 'DUPLICATE_INPUT_BINDING' && i.componentId === 'sw-2')).toBe(true);
+  });
+
+  it('rejects malformed component payloads in parseStoredHardwareConfig (BUG-09)', () => {
+    const base = createFullDemoHardwareConfig();
+
+    // Missing segmentMap on SEVEN_SEGMENT
+    const brokenSeg = {
+      ...base,
+      components: base.components.map((c) =>
+        c.type === 'SEVEN_SEGMENT' ? { ...c, segmentMap: undefined } : c
+      ),
+    };
+    expect(parseStoredHardwareConfig(brokenSeg)).toBeNull();
+
+    // Invalid KEY behavior / initialPressed
+    const brokenKey = {
+      ...base,
+      components: base.components.map((c) =>
+        c.type === 'KEY' ? { ...c, initialPressed: 'not-an-array' } : c
+      ),
+    };
+    expect(parseStoredHardwareConfig(brokenKey)).toBeNull();
+
+    // Invalid MATRIX row.width (NaN / out of range)
+    const brokenMatrix = {
+      ...base,
+      components: base.components.map((c) =>
+        c.type === 'MATRIX' ? { ...c, row: { ...c.row, width: 99 } } : c
+      ),
+    };
+    expect(parseStoredHardwareConfig(brokenMatrix)).toBeNull();
+
+    // Valid default config still parses cleanly
+    expect(parseStoredHardwareConfig(base)).not.toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Plus,
   Trash2,
@@ -43,6 +43,61 @@ const COMPONENT_TYPES: HardwareComponentType[] = [
 ];
 
 const COLORS: LedColorTheme[] = ['rose', 'emerald', 'amber', 'cyan', 'violet'];
+
+/**
+ * Controlled integer input that allows clearing/editing digits without snapping back
+ * mid-keystroke; clamps to [min, max] on blur or valid integer entry (BUG-17).
+ */
+const ClampedNumberInput: React.FC<{
+  value: number;
+  min: number;
+  max: number;
+  onChange: (next: number) => void;
+  className?: string;
+}> = ({ value, min, max, onChange, className }) => {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setDraft(String(value));
+      return;
+    }
+    const parsed = Math.floor(Number(trimmed));
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    const clamped = Math.max(min, Math.min(max, parsed));
+    setDraft(String(clamped));
+    if (clamped !== value) onChange(clamped);
+  };
+
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      value={draft}
+      onChange={(e) => {
+        const nextRaw = e.target.value;
+        setDraft(nextRaw);
+        if (nextRaw.trim() !== '') {
+          const parsed = Math.floor(Number(nextRaw));
+          if (Number.isFinite(parsed) && parsed >= min && parsed <= max && parsed !== value) {
+            onChange(parsed);
+          }
+        }
+      }}
+      onBlur={() => commit(draft)}
+      className={className}
+    />
+  );
+};
 
 export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
   config,
@@ -311,7 +366,7 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
                     </select>
                   </div>
 
-                  {comp.type !== 'CLOCK' && (
+                  {comp.type !== 'CLOCK' && comp.type !== 'SEVEN_SEGMENT' && (
                     <div>
                       <label className="block text-[11px] text-slate-400 mb-1">
                         {t.bitOrderField}
@@ -501,17 +556,16 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
                         <label className="block text-[10px] text-slate-400 mb-1">
                           {t.widthField}
                         </label>
-                        <input
-                          type="number"
+                        <ClampedNumberInput
                           min={1}
                           max={16}
                           value={comp.row.width}
-                          onChange={(e) =>
+                          onChange={(width) =>
                             updateComponent(comp.id, {
                               ...comp,
                               row: {
                                 ...comp.row,
-                                width: Math.max(1, Math.min(16, Number(e.target.value) || 16)),
+                                width,
                               },
                             })
                           }
@@ -583,17 +637,16 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
                         <label className="block text-[10px] text-slate-400 mb-1">
                           {t.widthField}
                         </label>
-                        <input
-                          type="number"
+                        <ClampedNumberInput
                           min={1}
                           max={16}
                           value={comp.col.width}
-                          onChange={(e) =>
+                          onChange={(width) =>
                             updateComponent(comp.id, {
                               ...comp,
                               col: {
                                 ...comp.col,
-                                width: Math.max(1, Math.min(16, Number(e.target.value) || 16)),
+                                width,
                               },
                             })
                           }

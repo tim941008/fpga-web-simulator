@@ -61,6 +61,25 @@ const VALID_COMPONENT_TYPES = new Set([
   'MATRIX',
 ]);
 
+const VALID_POLARITIES = new Set(['active-high', 'active-low']);
+const VALID_BIT_ORDERS = new Set(['msb-to-lsb', 'lsb-to-msb']);
+const VALID_MATRIX_BIT_ORDERS = new Set(['15-to-0', '0-to-15']);
+const VALID_LED_COLORS = new Set(['rose', 'emerald', 'amber', 'cyan', 'violet']);
+
+function isFiniteIntInRange(val: unknown, min: number, max: number): val is number {
+  return typeof val === 'number' && Number.isInteger(val) && val >= min && val <= max;
+}
+
+function isValidSegmentMap(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const m = raw as Record<string, unknown>;
+  for (const key of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+    if (!isFiniteIntInRange(m[key], 0, 63)) return false;
+  }
+  if (m.dp !== null && !isFiniteIntInRange(m.dp, 0, 63)) return false;
+  return true;
+}
+
 function isValidComponent(item: unknown): item is HardwareComponentConfig {
   if (!item || typeof item !== 'object') return false;
   const c = item as Record<string, unknown>;
@@ -72,18 +91,51 @@ function isValidComponent(item: unknown): item is HardwareComponentConfig {
   if (c.type === 'MATRIX') {
     const row = c.row as Record<string, unknown> | undefined;
     const col = c.col as Record<string, unknown> | undefined;
-    if (!row || !col) return false;
+    if (!row || typeof row !== 'object' || !col || typeof col !== 'object') return false;
     if (typeof row.signalName !== 'string' || typeof col.signalName !== 'string') return false;
-    if (row.bitOrder !== '15-to-0' && row.bitOrder !== '0-to-15') return false;
-    if (col.bitOrder !== '15-to-0' && col.bitOrder !== '0-to-15') return false;
-    if (row.polarity !== 'active-high' && row.polarity !== 'active-low') return false;
-    if (col.polarity !== 'active-high' && col.polarity !== 'active-low') return false;
+    if (!isFiniteIntInRange(row.width, 1, MATRIX_SIZE)) return false;
+    if (!isFiniteIntInRange(col.width, 1, MATRIX_SIZE)) return false;
+    if (!VALID_MATRIX_BIT_ORDERS.has(String(row.bitOrder))) return false;
+    if (!VALID_MATRIX_BIT_ORDERS.has(String(col.bitOrder))) return false;
+    if (!VALID_POLARITIES.has(String(row.polarity))) return false;
+    if (!VALID_POLARITIES.has(String(col.polarity))) return false;
+    if (typeof c.povEnabled !== 'boolean') return false;
+    if (typeof c.color !== 'string' || !VALID_LED_COLORS.has(c.color)) return false;
     return true;
   }
 
   if (typeof c.signalName !== 'string') return false;
-  if (typeof c.width !== 'number' || !Number.isFinite(c.width) || c.width < 1) return false;
-  return true;
+  if (!isFiniteIntInRange(c.width, 1, 64)) return false;
+  if (!VALID_POLARITIES.has(String(c.polarity))) return false;
+
+  switch (c.type) {
+    case 'CLOCK':
+      return typeof c.defaultHz === 'number' && Number.isFinite(c.defaultHz) && c.defaultHz > 0;
+    case 'SWITCH':
+      return VALID_BIT_ORDERS.has(String(c.bitOrder)) && typeof c.initialValue === 'string';
+    case 'KEY':
+      return (
+        VALID_BIT_ORDERS.has(String(c.bitOrder)) &&
+        (c.behavior === 'momentary' || c.behavior === 'toggle') &&
+        Array.isArray(c.initialPressed) &&
+        c.initialPressed.every((v) => typeof v === 'boolean')
+      );
+    case 'LED':
+      return (
+        VALID_BIT_ORDERS.has(String(c.bitOrder)) &&
+        typeof c.color === 'string' &&
+        VALID_LED_COLORS.has(c.color)
+      );
+    case 'SEVEN_SEGMENT':
+      return (
+        typeof c.showDecimalPoint === 'boolean' &&
+        typeof c.color === 'string' &&
+        VALID_LED_COLORS.has(c.color) &&
+        isValidSegmentMap(c.segmentMap)
+      );
+    default:
+      return false;
+  }
 }
 
 /**

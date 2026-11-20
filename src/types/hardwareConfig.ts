@@ -127,7 +127,10 @@ export type ValidationIssueCode =
   | 'MISSING_SIGNAL'
   | 'WIDTH_MISMATCH'
   | 'DIRECTION_MISMATCH'
-  | 'INVALID_SEGMENT_BIT';
+  | 'INVALID_SEGMENT_BIT'
+  | 'DUPLICATE_INPUT_BINDING'
+  | 'MULTIPLE_ACTIVE_CLOCKS'
+  | 'MULTIPLE_ACTIVE_MATRICES';
 
 export interface ComponentValidationIssue {
   componentId: string;
