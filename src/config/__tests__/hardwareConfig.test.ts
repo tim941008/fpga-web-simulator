@@ -616,6 +616,10 @@ describe('8. Multi-File Example Hardware Configurations & Restore Default (BUG-0
       signals: ['CLOCK_50', 'KEY', 'MATRIX_ROW', 'MATRIX_COL'],
       types: ['CLOCK', 'KEY', 'MATRIX'],
     },
+    'ex5-lcd-hello': {
+      signals: ['CLOCK_50', 'rst', 'data', 'rs', 'rw', 'en', 'rst'],
+      types: ['CLOCK', 'KEY', 'LCD_CHARACTER'],
+    },
   };
 
   function collectSignals(cfg: HardwareConfigSchema): string[] {
@@ -623,6 +627,12 @@ describe('8. Multi-File Example Hardware Configurations & Restore Default (BUG-0
     for (const c of cfg.components) {
       if (c.type === 'MATRIX') {
         out.push(c.row.signalName, c.col.signalName);
+      } else if (c.type === 'LCD_CHARACTER') {
+        out.push(
+          ...[c.dataSignalName, c.rsSignalName, c.rwSignalName, c.enSignalName, c.rstSignalName].filter(
+            Boolean
+          )
+        );
       } else {
         out.push(c.signalName);
       }

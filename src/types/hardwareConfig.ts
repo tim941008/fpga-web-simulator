@@ -4,7 +4,10 @@ export type HardwareComponentType =
   | 'SWITCH'
   | 'LED'
   | 'SEVEN_SEGMENT'
-  | 'MATRIX';
+  | 'MATRIX'
+  | 'LCD_CHARACTER';
+
+export type LcdBacklightTheme = 'green' | 'amber' | 'blue';
 
 export type BitOrder = 'msb-to-lsb' | 'lsb-to-msb';
 export type MatrixBitOrder = '15-to-0' | '0-to-15';
@@ -106,13 +109,30 @@ export interface MatrixComponentConfig extends HardwareComponentBase {
   pattern: number[];
 }
 
+export interface LcdCharacterComponentConfig extends HardwareComponentBase {
+  type: 'LCD_CHARACTER';
+  /** 8-bit parallel data bus (data[7:0]). */
+  dataSignalName: string;
+  /** Register Select (0 = Command, 1 = Data). */
+  rsSignalName: string;
+  /** Read/Write (0 = Write, 1 = Read; optional, blank = Write). */
+  rwSignalName: string;
+  /** Enable strobe (latches on falling edge 1 -> 0). */
+  enSignalName: string;
+  /** Optional reset signal (blank = unused). */
+  rstSignalName: string;
+  rstPolarity: SignalPolarity;
+  backlight: LcdBacklightTheme;
+}
+
 export type HardwareComponentConfig =
   | ClockComponentConfig
   | SwitchComponentConfig
   | KeyComponentConfig
   | LedComponentConfig
   | SevenSegmentComponentConfig
-  | MatrixComponentConfig;
+  | MatrixComponentConfig
+  | LcdCharacterComponentConfig;
 
 export const HARDWARE_CONFIG_SCHEMA_VERSION = 1;
 

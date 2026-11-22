@@ -3,6 +3,7 @@ import {
   ComponentValidationIssue,
   HardwareComponentConfig,
   KeyComponentConfig,
+  LcdCharacterComponentConfig,
   LedColorTheme,
   LedComponentConfig,
   SevenSegmentComponentConfig,
@@ -13,8 +14,10 @@ import {
   isRawBitActive,
   logicalStateToRawBit,
 } from '../config/hardwareMapping';
+import { createInitialLcdState, LcdState } from '../config/lcdController';
+import { LcdCharacterDisplay } from './LcdCharacterDisplay';
 import { SevenSegmentDisplay } from './SevenSegmentDisplay';
-import { Cpu, Sliders, Radio, ToggleLeft, AlertTriangle } from 'lucide-react';
+import { Cpu, Sliders, Radio, ToggleLeft, AlertTriangle, Monitor } from 'lucide-react';
 import { TranslationDict } from '../i18n/translations';
 import { UiTheme } from '../config/uiPreferences';
 
@@ -23,6 +26,7 @@ interface BoardViewProps {
   boardName: string;
   components: HardwareComponentConfig[];
   signals: Record<string, bigint>;
+  lcdStates?: Record<string, LcdState>;
   validationIssues: ComponentValidationIssue[];
   t: TranslationDict;
   theme?: UiTheme;
@@ -43,6 +47,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
   boardName,
   components,
   signals,
+  lcdStates,
   validationIssues,
   t,
   theme = 'warm-lab',
@@ -51,6 +56,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
 }) => {
   const isWarm = theme === 'warm-lab';
   const enabled = components.filter((c) => c.enabled);
+  const lcdComps = enabled.filter(
+    (c): c is LcdCharacterComponentConfig => c.type === 'LCD_CHARACTER'
+  );
   const hexComps = enabled.filter(
     (c): c is SevenSegmentComponentConfig => c.type === 'SEVEN_SEGMENT'
   );
@@ -118,6 +126,28 @@ export const BoardView: React.FC<BoardViewProps> = ({
       </div>
 
       <div className="space-y-6">
+        {/* 0. 16x2 Character LCD Displays */}
+        {lcdComps.length > 0 && (
+          <div>
+            <div className="text-xs font-mono uppercase tracking-wider text-emerald-300 mb-2.5 flex items-center gap-1.5 font-semibold">
+              <Monitor className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{t.sectionLcd}</span>
+            </div>
+            <div className="space-y-3">
+              {lcdComps.map((comp) => (
+                <LcdCharacterDisplay
+                  key={comp.id}
+                  config={comp}
+                  state={lcdStates?.[comp.id] ?? createInitialLcdState()}
+                  signals={signals}
+                  issues={issueByCompId.get(comp.id) ?? []}
+                  t={t}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 1. 7-Segment Displays */}
         {hexComps.length > 0 && (
           <div>

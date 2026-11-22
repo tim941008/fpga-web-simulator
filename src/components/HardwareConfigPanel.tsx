@@ -15,6 +15,7 @@ import {
   HardwareComponentType,
   HardwareConfigSchema,
   KeyBehavior,
+  LcdBacklightTheme,
   LedColorTheme,
   MatrixBitOrder,
   SevenSegmentBitMap,
@@ -42,6 +43,7 @@ const COMPONENT_TYPES: HardwareComponentType[] = [
   'LED',
   'SEVEN_SEGMENT',
   'MATRIX',
+  'LCD_CHARACTER',
 ];
 
 const COLORS: LedColorTheme[] = ['rose', 'emerald', 'amber', 'cyan', 'violet'];
@@ -313,7 +315,87 @@ export const HardwareConfigPanel: React.FC<HardwareConfigPanelProps> = ({
               </div>
 
               {/* Type-Specific Settings */}
-              {comp.type !== 'MATRIX' ? (
+              {comp.type === 'LCD_CHARACTER' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdDataSignalField}
+                    </label>
+                    {renderSignalSelect(comp.dataSignalName, outputPorts, (sigName) =>
+                      updateComponent(comp.id, { ...comp, dataSignalName: sigName })
+                    )}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdRsSignalField}
+                    </label>
+                    {renderSignalSelect(comp.rsSignalName, outputPorts, (sigName) =>
+                      updateComponent(comp.id, { ...comp, rsSignalName: sigName })
+                    )}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdRwSignalField}
+                    </label>
+                    {renderSignalSelect(comp.rwSignalName, outputPorts, (sigName) =>
+                      updateComponent(comp.id, { ...comp, rwSignalName: sigName })
+                    )}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdEnSignalField}
+                    </label>
+                    {renderSignalSelect(comp.enSignalName, outputPorts, (sigName) =>
+                      updateComponent(comp.id, { ...comp, enSignalName: sigName })
+                    )}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdRstSignalField}
+                    </label>
+                    {renderSignalSelect(comp.rstSignalName, ports, (sigName) =>
+                      updateComponent(comp.id, { ...comp, rstSignalName: sigName })
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdRstPolarityField}
+                    </label>
+                    <select
+                      value={comp.rstPolarity}
+                      onChange={(e) =>
+                        updateComponent(comp.id, {
+                          ...comp,
+                          rstPolarity: e.target.value as SignalPolarity,
+                        })
+                      }
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 font-mono text-slate-100"
+                    >
+                      <option value="active-high">{t.activeHighShort}</option>
+                      <option value="active-low">{t.activeLowShort}</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">
+                      {t.lcdBacklightField}
+                    </label>
+                    <select
+                      value={comp.backlight}
+                      onChange={(e) =>
+                        updateComponent(comp.id, {
+                          ...comp,
+                          backlight: e.target.value as LcdBacklightTheme,
+                        })
+                      }
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 font-mono text-slate-100"
+                    >
+                      <option value="green">STN Green</option>
+                      <option value="amber">Amber</option>
+                      <option value="blue">STN Blue</option>
+                    </select>
+                  </div>
+                </div>
+              ) : comp.type !== 'MATRIX' ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <div className="sm:col-span-2">
                     <label className="block text-[11px] text-slate-400 mb-1">

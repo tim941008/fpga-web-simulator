@@ -159,6 +159,17 @@ export const TRANSLATIONS = {
     showingSignalsPrefix: 'Showing',
     showingSignalsOf: 'of',
     showingSignalsSuffix: 'signals',
+    // LCD Character Display (Phase C.3)
+    sectionLcd: '16×2 Character LCD Display',
+    lcdWritesLabel: 'Writes',
+    lcdDisplayStateLabel: 'Display',
+    lcdDataSignalField: 'Data Bus (data[7:0])',
+    lcdRsSignalField: 'Register Select (rs)',
+    lcdRwSignalField: 'Read / Write (rw, optional)',
+    lcdEnSignalField: 'Enable Strobe (en)',
+    lcdRstSignalField: 'Reset (rst, optional)',
+    lcdRstPolarityField: 'Reset Polarity',
+    lcdBacklightField: 'Backlight Theme',
   },
   'zh-TW': {
     appTitle: 'Web FPGA 數位電路模擬器',
@@ -298,6 +309,17 @@ export const TRANSLATIONS = {
     showingSignalsPrefix: '顯示',
     showingSignalsOf: '/',
     showingSignalsSuffix: '個訊號',
+    // LCD Character Display (Phase C.3)
+    sectionLcd: '16×2 字元型 LCD 顯示器',
+    lcdWritesLabel: '寫入次數',
+    lcdDisplayStateLabel: '顯示狀態',
+    lcdDataSignalField: '資料匯流排 (data[7:0])',
+    lcdRsSignalField: '暫存器選擇 (rs)',
+    lcdRwSignalField: '讀寫控制 (rw，選填)',
+    lcdEnSignalField: '致能訊號 (en)',
+    lcdRstSignalField: '重設訊號 (rst，選填)',
+    lcdRstPolarityField: '重設極性',
+    lcdBacklightField: '背光色系',
   },
 };
 

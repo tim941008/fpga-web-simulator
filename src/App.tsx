@@ -24,8 +24,16 @@ import { PortDefinition, SignalHistoryEntry } from './types/fpga';
 import {
   ClockComponentConfig,
   HardwareConfigSchema,
+  LcdCharacterComponentConfig,
   MatrixComponentConfig,
 } from './types/hardwareConfig';
+import {
+  cloneLcdState,
+  createInitialLcdState,
+  extractLcdSample,
+  LcdState,
+  stepLcdState,
+} from './config/lcdController';
 import {
   computeInitialInputSignals,
   setSignalBit,
@@ -159,11 +167,13 @@ export const App: React.FC = () => {
 
   // 16x16 matrix live intensity buffer
   const [matrixBuffer, setMatrixBuffer] = useState<number[][]>(() => createEmptyMatrixBuffer());
+  const [lcdStates, setLcdStates] = useState<Record<string, LcdState>>({});
 
   const runtimeRef = useRef<FpgaRuntime | null>(null);
   const cycleRef = useRef(0);
   const clockLevelRef = useRef<0 | 1>(0);
   const matrixRef = useRef<number[][]>(createEmptyMatrixBuffer());
+  const lcdStatesRef = useRef<Record<string, LcdState>>({});
   const lastMatrixSampleAtRef = useRef<number>(
     typeof performance !== 'undefined' ? performance.now() : Date.now()
   );
@@ -319,6 +329,41 @@ export const App: React.FC = () => {
     publishMatrix();
   }, [publishMatrix]);
 
+  const publishLcdStates = useCallback(() => {
+    const next: Record<string, LcdState> = {};
+    for (const [id, st] of Object.entries(lcdStatesRef.current)) {
+      next[id] = cloneLcdState(st);
+    }
+    setLcdStates(next);
+  }, []);
+
+  const resetLcdStates = useCallback(
+    (comps: HardwareConfigSchema['components'] = hardwareConfigRef.current.components) => {
+      const next: Record<string, LcdState> = {};
+      for (const comp of comps) {
+        if (comp.type === 'LCD_CHARACTER') {
+          next[comp.id] = createInitialLcdState();
+        }
+      }
+      lcdStatesRef.current = next;
+      publishLcdStates();
+    },
+    [publishLcdStates]
+  );
+
+  const stepAllLcds = useCallback((read: (signalName: string) => bigint) => {
+    const comps = hardwareConfigRef.current.components;
+    for (const comp of comps) {
+      if (!comp.enabled || comp.type !== 'LCD_CHARACTER') continue;
+      let st = lcdStatesRef.current[comp.id];
+      if (!st) {
+        st = createInitialLcdState();
+        lcdStatesRef.current[comp.id] = st;
+      }
+      stepLcdState(st, extractLcdSample(comp as LcdCharacterComponentConfig, read));
+    }
+  }, []);
+
   // Re-render matrix display immediately when Matrix display orientation / polarity / mode changes
   // without ever modifying underlying Verilog signal values.
   useEffect(() => {
@@ -369,6 +414,7 @@ export const App: React.FC = () => {
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
+    publishLcdStates();
     setClockLevel(idleLevel);
     setCycleCount(s.cycle);
     setSignals(sig);
@@ -389,9 +435,13 @@ export const App: React.FC = () => {
   useEffect(() => {
     const rt = runtimeRef.current;
     if (rt && clkName) {
-      stepRef.current = rt.makeCycleStepper(clkName, clockPolarity);
+      const baseStep = rt.makeCycleStepper(clkName, clockPolarity);
+      stepRef.current = () => {
+        baseStep();
+        stepAllLcds((name) => rt.readSignal(name));
+      };
     }
-  }, [clkName, clockPolarity]);
+  }, [clkName, clockPolarity, stepAllLcds]);
 
   const startRun = (mode: RunMode) => {
     const rt = runtimeRef.current;
@@ -403,7 +453,11 @@ export const App: React.FC = () => {
       rt.stepEdge(activeClk, idleLevel);
       clockLevelRef.current = idleLevel;
     }
-    stepRef.current = rt.makeCycleStepper(activeClk, polarity);
+    const baseStep = rt.makeCycleStepper(activeClk, polarity);
+    stepRef.current = () => {
+      baseStep();
+      stepAllLcds((name) => rt.readSignal(name));
+    };
     // Live matrix: read activeMatrixConfigRef dynamically so mid-run config edits take effect immediately (BUG-03)
     // Pass elapsed dtMs for frequency-independent POV decay (BUG-14)
     lastMatrixSampleAtRef.current =
@@ -527,6 +581,9 @@ export const App: React.FC = () => {
       ) ?? null;
     sampleMatrix(sig, matrixCfg);
     publishMatrix();
+    resetLcdStates(hardwareConfigRef.current.components);
+    stepAllLcds((name) => sig[name] ?? 0n);
+    publishLcdStates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectFiles, topModule]);
 
@@ -554,6 +611,8 @@ export const App: React.FC = () => {
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
+    stepAllLcds((name) => sig[name] ?? 0n);
+    publishLcdStates();
     setClockLevel(next);
     setCycleCount(cycleRef.current);
     setSignals(sig);
@@ -585,6 +644,8 @@ export const App: React.FC = () => {
     const lo = rt.getSignals();
     sampleMatrix(lo);
     publishMatrix();
+    stepAllLcds((name) => lo[name] ?? 0n);
+    publishLcdStates();
     setClockLevel(idleLevel);
     setCycleCount(cycleRef.current);
     setSignals(lo);
@@ -604,6 +665,8 @@ export const App: React.FC = () => {
     const sig = rt.getSignals();
     sampleMatrix(sig);
     publishMatrix();
+    stepAllLcds((name) => sig[name] ?? 0n);
+    publishLcdStates();
     setSignals(sig);
 
     if (!running || !clkName) {
@@ -641,6 +704,9 @@ export const App: React.FC = () => {
     matrixRef.current = createEmptyMatrixBuffer();
     sampleMatrix(sig);
     publishMatrix();
+    resetLcdStates(hardwareConfigRef.current.components);
+    stepAllLcds((name) => sig[name] ?? 0n);
+    publishLcdStates();
   };
 
   // ------------------------------------------------------------- project import / editing
@@ -1129,6 +1195,7 @@ export const App: React.FC = () => {
                 boardName={hardwareConfig.boardName}
                 components={hardwareConfig.components}
                 signals={signals}
+                lcdStates={lcdStates}
                 validationIssues={validationIssues}
                 t={t}
                 theme={uiTheme}
