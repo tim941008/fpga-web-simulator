@@ -59,12 +59,14 @@ const VALID_COMPONENT_TYPES = new Set([
   'LED',
   'SEVEN_SEGMENT',
   'MATRIX',
+  'LCD_CHARACTER',
 ]);
 
 const VALID_POLARITIES = new Set(['active-high', 'active-low']);
 const VALID_BIT_ORDERS = new Set(['msb-to-lsb', 'lsb-to-msb']);
 const VALID_MATRIX_BIT_ORDERS = new Set(['15-to-0', '0-to-15']);
 const VALID_LED_COLORS = new Set(['rose', 'emerald', 'amber', 'cyan', 'violet']);
+const VALID_LCD_BACKLIGHTS = new Set(['green', 'amber', 'blue']);
 
 function isFiniteIntInRange(val: unknown, min: number, max: number): val is number {
   return typeof val === 'number' && Number.isInteger(val) && val >= min && val <= max;
@@ -101,6 +103,17 @@ function isValidComponent(item: unknown): item is HardwareComponentConfig {
     if (!VALID_POLARITIES.has(String(col.polarity))) return false;
     if (typeof c.povEnabled !== 'boolean') return false;
     if (typeof c.color !== 'string' || !VALID_LED_COLORS.has(c.color)) return false;
+    return true;
+  }
+
+  if (c.type === 'LCD_CHARACTER') {
+    if (typeof c.dataSignalName !== 'string') return false;
+    if (typeof c.rsSignalName !== 'string') return false;
+    if (typeof c.rwSignalName !== 'string') return false;
+    if (typeof c.enSignalName !== 'string') return false;
+    if (typeof c.rstSignalName !== 'string') return false;
+    if (!VALID_POLARITIES.has(String(c.rstPolarity))) return false;
+    if (!VALID_LCD_BACKLIGHTS.has(String(c.backlight))) return false;
     return true;
   }
 

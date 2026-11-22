@@ -141,6 +141,13 @@ export function createBoardConfigForSignals(
       if (comp.type === 'MATRIX') {
         return allowed.has(comp.row.signalName) && allowed.has(comp.col.signalName);
       }
+      if (comp.type === 'LCD_CHARACTER') {
+        return (
+          allowed.has(comp.dataSignalName) &&
+          allowed.has(comp.rsSignalName) &&
+          allowed.has(comp.enSignalName)
+        );
+      }
       return allowed.has(comp.signalName);
     }),
   };
@@ -318,5 +325,73 @@ export function createNewComponentConfig(
         pattern: createDefaultMatrixPattern(),
       };
     }
+    case 'LCD_CHARACTER': {
+      const dataPort = outputPorts.find((x) => /lcd_data|data/i.test(x.name));
+      const rsPort = outputPorts.find((x) => /lcd_rs|\brs\b/i.test(x.name));
+      const rwPort = outputPorts.find((x) => /lcd_rw|\brw\b/i.test(x.name));
+      const enPort = outputPorts.find((x) => /lcd_en|\ben\b/i.test(x.name));
+      const rstPort = ports.find((x) => /lcd_rst|\brst\b/i.test(x.name));
+      return {
+        id,
+        type: 'LCD_CHARACTER',
+        label: `16×2 LCD ${existingCount + 1}`,
+        enabled: true,
+        dataSignalName: dataPort?.name ?? '',
+        rsSignalName: rsPort?.name ?? '',
+        rwSignalName: rwPort?.name ?? '',
+        enSignalName: enPort?.name ?? '',
+        rstSignalName: rstPort?.name ?? '',
+        rstPolarity: 'active-high',
+        backlight: 'green',
+      };
+    }
   }
+}
+
+/**
+ * Default hardware configuration for Example 5 (`top_lcd_hello`).
+ */
+export function createLcdHelloWorldHardwareConfig(): HardwareConfigSchema {
+  return {
+    schemaVersion: HARDWARE_CONFIG_SCHEMA_VERSION,
+    boardName: 'Multi-File Example — 16×2 LCD Hello World',
+    components: [
+      {
+        id: 'clk-lcd',
+        type: 'CLOCK',
+        label: 'System Clock',
+        enabled: true,
+        signalName: 'CLOCK_50',
+        width: 1,
+        polarity: 'active-high',
+        defaultHz: 100,
+      },
+      {
+        id: 'key-lcd',
+        type: 'KEY',
+        label: 'Reset Button (rst)',
+        enabled: true,
+        signalName: 'rst',
+        width: 1,
+        bitOrder: 'msb-to-lsb',
+        polarity: 'active-high',
+        behavior: 'momentary',
+        initialPressed: [false],
+        bitLabels: ['RST'],
+      },
+      {
+        id: 'lcd-1',
+        type: 'LCD_CHARACTER',
+        label: '16×2 Character LCD',
+        enabled: true,
+        dataSignalName: 'data',
+        rsSignalName: 'rs',
+        rwSignalName: 'rw',
+        enSignalName: 'en',
+        rstSignalName: 'rst',
+        rstPolarity: 'active-high',
+        backlight: 'green',
+      },
+    ],
+  };
 }

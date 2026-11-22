@@ -377,6 +377,73 @@ export function validateHardwareConfig(
           issues
         );
         break;
+
+      case 'LCD_CHARACTER':
+        validateSignalBinding(
+          comp.id,
+          comp.label,
+          'dataSignalName',
+          comp.dataSignalName,
+          8,
+          'output',
+          portByName,
+          issues
+        );
+        validateSignalBinding(
+          comp.id,
+          comp.label,
+          'rsSignalName',
+          comp.rsSignalName,
+          1,
+          'output',
+          portByName,
+          issues
+        );
+        if (comp.rwSignalName.trim()) {
+          validateSignalBinding(
+            comp.id,
+            comp.label,
+            'rwSignalName',
+            comp.rwSignalName,
+            1,
+            'output',
+            portByName,
+            issues
+          );
+        }
+        validateSignalBinding(
+          comp.id,
+          comp.label,
+          'enSignalName',
+          comp.enSignalName,
+          1,
+          'output',
+          portByName,
+          issues
+        );
+        if (comp.rstSignalName.trim()) {
+          const rstPort = portByName.get(comp.rstSignalName);
+          if (!rstPort) {
+            issues.push({
+              componentId: comp.id,
+              componentLabel: comp.label,
+              field: 'rstSignalName',
+              severity: 'error',
+              code: 'MISSING_SIGNAL',
+              message: `${comp.label} (rstSignalName): signal "${comp.rstSignalName}" does not exist in active Verilog module.`,
+            });
+          } else if (rstPort.width !== 1) {
+            issues.push({
+              componentId: comp.id,
+              componentLabel: comp.label,
+              field: 'rstSignalName',
+              severity: 'warning',
+              code: 'WIDTH_MISMATCH',
+              message: `${comp.label} (rstSignalName): configured width (1-bit) differs from Verilog port "${comp.rstSignalName}" (${rstPort.width}-bit).`,
+            });
+          }
+        }
+        break;
     }
   }
 
@@ -397,6 +464,12 @@ export function getMappedComponentsForSignal(
     if (comp.type === 'MATRIX') {
       if (comp.row.signalName === signalName) labels.push(`${comp.label} (ROW)`);
       if (comp.col.signalName === signalName) labels.push(`${comp.label} (COL)`);
+    } else if (comp.type === 'LCD_CHARACTER') {
+      if (comp.dataSignalName === signalName) labels.push(`${comp.label} (DATA)`);
+      if (comp.rsSignalName === signalName) labels.push(`${comp.label} (RS)`);
+      if (comp.rwSignalName === signalName) labels.push(`${comp.label} (RW)`);
+      if (comp.enSignalName === signalName) labels.push(`${comp.label} (EN)`);
+      if (comp.rstSignalName === signalName) labels.push(`${comp.label} (RST)`);
     } else if (comp.signalName === signalName) {
       labels.push(comp.label);
     }

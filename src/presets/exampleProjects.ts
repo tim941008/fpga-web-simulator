@@ -3,7 +3,10 @@
  * HardwareConfig matching its exact top-module ports via `createBoardConfigForSignals`.
  */
 import { HardwareConfigSchema } from '../types/hardwareConfig';
-import { createBoardConfigForSignals } from '../config/defaultHardwareConfig';
+import {
+  createBoardConfigForSignals,
+  createLcdHelloWorldHardwareConfig,
+} from '../config/defaultHardwareConfig';
 
 export interface ExampleProject {
   id: string;
@@ -176,6 +179,123 @@ module matrix_driver (
 );
     assign row = 16'd1 << row_idx;
     assign col = 16'h8000 >> row_idx;
+endmodule
+`,
+      },
+    ],
+  },
+  {
+    id: 'ex5-lcd-hello',
+    name: 'Example 5: LCD Hello World (2 files)',
+    topModule: 'top_lcd_hello',
+    createHardwareConfig: createLcdHelloWorldHardwareConfig,
+    files: [
+      {
+        name: 'top_lcd_hello.v',
+        content: `module top_lcd_hello (
+    input  wire       CLOCK_50,
+    input  wire       rst,
+    output wire [7:0] data,
+    output wire       rs,
+    output wire       rw,
+    output wire       en
+);
+    lcd_hello_ctrl u_lcd (
+        .clk(CLOCK_50),
+        .rst(rst),
+        .data(data),
+        .rs(rs),
+        .rw(rw),
+        .en(en)
+    );
+endmodule
+`,
+      },
+      {
+        name: 'lcd_hello_ctrl.v',
+        content: `// HD44780 16x2 Character LCD Hello World Controller
+module lcd_hello_ctrl (
+    input  wire       clk,
+    input  wire       rst,
+    output reg  [7:0] data = 8'h00,
+    output reg        rs   = 1'b0,
+    output wire       rw,
+    output reg        en   = 1'b0
+);
+    assign rw = 1'b0; // Write-only mode
+
+    reg [5:0] idx   = 6'd0;
+    reg       phase = 1'b0; // 0: setup + EN=1, 1: EN=0 (falling-edge latch)
+
+    localparam [5:0] TOTAL_WRITES = 6'd33;
+
+    function [8:0] rom_entry;
+        input [5:0] k;
+        begin
+            case (k)
+                // Init commands (RS=0)
+                6'd0:  rom_entry = {1'b0, 8'h38}; // Function set: 8-bit, 2-line
+                6'd1:  rom_entry = {1'b0, 8'h0C}; // Display ON, cursor OFF
+                6'd2:  rom_entry = {1'b0, 8'h06}; // Entry mode: increment
+                6'd3:  rom_entry = {1'b0, 8'h01}; // Clear display
+                6'd4:  rom_entry = {1'b0, 8'h80}; // Row 0, Col 0
+                // Line 1: "Hello, FPGA!"
+                6'd5:  rom_entry = {1'b1, "H"};
+                6'd6:  rom_entry = {1'b1, "e"};
+                6'd7:  rom_entry = {1'b1, "l"};
+                6'd8:  rom_entry = {1'b1, "l"};
+                6'd9:  rom_entry = {1'b1, "o"};
+                6'd10: rom_entry = {1'b1, ","};
+                6'd11: rom_entry = {1'b1, " "};
+                6'd12: rom_entry = {1'b1, "F"};
+                6'd13: rom_entry = {1'b1, "P"};
+                6'd14: rom_entry = {1'b1, "G"};
+                6'd15: rom_entry = {1'b1, "A"};
+                6'd16: rom_entry = {1'b1, "!"};
+                // Line 2 address: 0xC0
+                6'd17: rom_entry = {1'b0, 8'hC0};
+                // Line 2: "16x2 LCD Ready!"
+                6'd18: rom_entry = {1'b1, "1"};
+                6'd19: rom_entry = {1'b1, "6"};
+                6'd20: rom_entry = {1'b1, "x"};
+                6'd21: rom_entry = {1'b1, "2"};
+                6'd22: rom_entry = {1'b1, " "};
+                6'd23: rom_entry = {1'b1, "L"};
+                6'd24: rom_entry = {1'b1, "C"};
+                6'd25: rom_entry = {1'b1, "D"};
+                6'd26: rom_entry = {1'b1, " "};
+                6'd27: rom_entry = {1'b1, "R"};
+                6'd28: rom_entry = {1'b1, "e"};
+                6'd29: rom_entry = {1'b1, "a"};
+                6'd30: rom_entry = {1'b1, "d"};
+                6'd31: rom_entry = {1'b1, "y"};
+                6'd32: rom_entry = {1'b1, "!"};
+                default: rom_entry = {1'b0, 8'h00};
+            endcase
+        end
+    endfunction
+
+    always @(posedge clk) begin
+        if (rst) begin
+            idx   <= 6'd0;
+            phase <= 1'b0;
+            en    <= 1'b0;
+            rs    <= 1'b0;
+            data  <= 8'h00;
+        end else if (idx < TOTAL_WRITES) begin
+            if (!phase) begin
+                {rs, data} <= rom_entry(idx);
+                en         <= 1'b1;
+                phase      <= 1'b1;
+            end else begin
+                en    <= 1'b0;
+                phase <= 1'b0;
+                idx   <= idx + 6'd1;
+            end
+        end else begin
+            en <= 1'b0;
+        end
+    end
 endmodule
 `,
       },
