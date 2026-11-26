@@ -3,7 +3,7 @@
 .env.*
 
 # Locally retained, manually verified SystemVerilog test project
-testV/
+/testV/
 
 # Dependencies
 node_modules/
