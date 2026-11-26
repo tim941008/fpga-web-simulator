@@ -55,7 +55,7 @@ beforeAll(async () => {
 });
 
 describe('testV 4-file SystemVerilog game project (end-to-end)', () => {
-  const testVDir = path.join(process.cwd(), 'testV');
+  const testVDir = path.join(process.cwd(), 'tests/fixtures/testV');
 
   function loadTestVFiles() {
     const names = fs.readdirSync(testVDir).filter((f) => /\.(v|sv|vh|svh)$/i.test(f)).sort();
