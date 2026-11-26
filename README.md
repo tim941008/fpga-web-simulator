@@ -5,6 +5,7 @@ A browser-based FPGA hardware simulator built with **React**, **TypeScript**, **
 ## Features
 
 - **Verilog HDL simulation** — In-browser compilation and cycle-accurate evaluation of combinational and sequential RTL via Verilator WebAssembly (`verilator_bin.wasm`)
+- **HDL code editor** — Verilog/SystemVerilog syntax highlighting with synchronized line numbers
 - **Customizable Hardware Configuration** — Add, remove, rename, and map `CLOCK`, `SWITCH`, `KEY`, `LED`, `SEVEN_SEGMENT`, and `MATRIX` components to any Verilog signal with live port validation and `localStorage` persistence
 - **Independent Switch & Key Controls** — Configurable bit widths, MSB→LSB / LSB→MSB bit ordering, Active-HIGH / Active-LOW polarity, initial states, momentary or toggle key behavior, and custom bit labels
 - **Configurable LEDs & 7-Segment Displays** — Custom colors, polarity, arbitrary `a`–`g` & `dp` segment bit mapping, and multiple independent display instances

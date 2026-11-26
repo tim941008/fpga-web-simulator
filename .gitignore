@@ -2,6 +2,9 @@
 .env
 .env.*
 
+# Locally retained, manually verified SystemVerilog test project
+testV/
+
 # Dependencies
 node_modules/
 .pnp

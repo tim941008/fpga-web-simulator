@@ -58,6 +58,7 @@ import { BoardView } from './components/BoardView';
 import { MatrixViewer } from './components/MatrixViewer';
 import { SignalMonitor } from './components/SignalMonitor';
 import { HardwareConfigPanel } from './components/HardwareConfigPanel';
+import { CodeEditor } from './components/CodeEditor';
 import { ProjectExplorer, TopModuleSelector } from './components/ProjectExplorer';
 import {
   getInitialLanguage,
@@ -1297,20 +1298,17 @@ export const App: React.FC = () => {
                     {t.editorAutoCompileNote}
                   </span>
                 </div>
-                <textarea
+                <CodeEditor
                   value={activeFile?.content ?? ''}
+                  fileName={activeFile?.name ?? ''}
                   disabled={!activeFile}
-                  onChange={(e) => {
+                  theme={uiTheme}
+                  onChange={(text) => {
                     if (!activeFile) return;
-                    const text = e.target.value;
                     debounceCompileRef.current = true;
                     setRuntimePorts(null);
                     setProjectFiles((files) => replaceFile(files, activeFile.id, text));
                   }}
-                  spellCheck={false}
-                  className={`w-full h-[460px] bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-100 focus:outline-none ${
-                    isWarm ? 'focus:border-amber-500' : 'focus:border-emerald-500'
-                  }`}
                 />
               </div>
             </div>
